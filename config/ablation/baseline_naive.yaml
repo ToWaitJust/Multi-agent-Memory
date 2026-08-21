@@ -1,0 +1,7 @@
+# ablation/baseline_naive.yaml —— naive 基座下界（§9.4 / §12.7）
+retriever_impl: retriever.full      # 全量传输（无融合）
+attention_impl: attention.noop      # 均匀
+weight_impl:    weight.uniform      # 均匀 DEFAULT_WEIGHTS
+selector_impl:  selector.topk       # 固定 top_k
+reward_impl:    reward.none
+conditioning_dims: []

@@ -1,0 +1,7 @@
+# ablation/+attention.yaml —— 四维注意力增量（§9.4 / §12.7）
+retriever_impl: retriever.bm25      # 中性基座：BM25 原始分
+attention_impl: attention.full
+weight_impl:    weight.uniform
+selector_impl:  selector.topk
+reward_impl:    reward.none
+conditioning_dims: []

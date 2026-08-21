@@ -1,0 +1,8 @@
+# ablation/baseline_reme.yaml —— 外部委托参考实现（非桩，§9.4 / §12.7）
+# V2.1：retriever.reme 注册为插件但内部行为 = ReMe 原生 search 完整通路（含 RRF+0.7/0.3），不裁剪不硬凑。
+retriever_impl: retriever.reme      # 参考：wrap ReMe 原生 search
+attention_impl: attention.noop
+weight_impl:    weight.uniform      # 退化（不叠加我们的权重，纯 ReMe 原生对照）
+selector_impl:  selector.topk
+reward_impl:    reward.none
+conditioning_dims: []

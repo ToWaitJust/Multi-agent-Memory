@@ -1,0 +1,36 @@
+# config/srtp.yaml —— 主配置（完整方法 full-ours 视图，§12.5）
+# V2.1：无 store_impl（双池为内核具体类）；model=deepseek（主 LLM）
+
+retriever_impl:  retriever.bm25      # 检索基座（full/bm25/vector/rrf；baseline-reme 用 reme）
+attention_impl:  attention.full      # 四维注意力（完整）
+weight_impl:     weight.full         # 条件化混合权重（完整，含蒸馏+RL）
+selector_impl:   selector.full       # 阈值自适应选择（完整）
+embedding_impl:  embed.dashscope     # 1024 维外部 API（基础设施层）
+reward_impl:     reward.explicit     # 显式点赞/点踩
+model_impl:      model.deepseek      # 主 LLM（先验 + 回复生成）
+factory_impl:    factory.role        # main/sub 角色装配
+
+# 调度参数
+threshold: 0.6
+max_shared: 10
+candidate_override: 50
+top_k: 5
+task_tag: "main_task"
+retrieval_mode: "pre_schedule"
+llm_prior_samples: 1
+
+# 个性化（V2.1：V1 即实现 condition）
+conditioning_dims: [semantic, task]
+condition_key: "u_tu|research|srtp"
+
+# embedding（D-5 / D-11）
+embedding_provider: "dashscope"
+embedding_model: "text-embedding-v4"
+embedding_dimensions: 1024
+embedding_cache: true
+
+# 融合系数（V1 固定，不学习）
+fixed:
+  alpha: 0.6
+  beta: 0.4
+  embedding_dim: 1024

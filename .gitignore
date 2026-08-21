@@ -21,3 +21,7 @@ dev-tools-srtp/
 __pycache__/
 *.pyc
 .venv/
+
+# 覆盖率产物
+.coverage
+.coverage.*

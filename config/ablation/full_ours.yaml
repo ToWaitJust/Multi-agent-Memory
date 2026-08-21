@@ -1,0 +1,8 @@
+# ablation/full_ours.yaml —— 完整方案（§9.4 / §12.7）
+retriever_impl: retriever.bm25      # 定稿：bm25（与 +attention/+weight 同基座，归因干净）
+attention_impl: attention.full
+weight_impl:    weight.full
+selector_impl:  selector.full
+embedding_impl: embed.dashscope
+reward_impl:    reward.explicit
+conditioning_dims: [semantic, task]

@@ -1,0 +1,7 @@
+# ablation/+weight.yaml —— 混合权重增量（§9.4 / §12.7）
+retriever_impl: retriever.bm25
+attention_impl: attention.full
+weight_impl:    weight.full
+selector_impl:  selector.topk
+reward_impl:    reward.none
+conditioning_dims: []
