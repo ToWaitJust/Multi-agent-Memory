@@ -27,23 +27,38 @@ class MemorySchedulingMiddleware:
                  user_id: str = "u_tu", session_id: str = "sess_001",
                  log_path: str = "data/metrics/schedule.jsonl",
                  llm_prior_fn: Optional[Callable[[str], dict]] = None,
-                 reme_search_callable: Optional[Callable] = None):
+                 reme_search_callable: Optional[Callable] = None,
+                 resident_pool_path: Optional[str] = None,
+                 shared_pool_path: Optional[str] = None):
+        """resident_pool_path / shared_pool_path：可选覆盖双池落盘路径。
+        默认 data/reme/<user>/main|sub1（真实环境）；测试可注入 tmp_path 实现完全隔离。"""
         from .monitor.schedule_logger import ScheduleLogger
         self.config = config or SchedulingConfig()
         self.user_id = user_id
         self.session_id = session_id
         self.logger = ScheduleLogger(log_path)
 
+        # 真实 embedding 后端（D-5/D-11）：按 config.embedding_impl 从注册表装配。
+        # 未配置 key 时插件内部自动降级为确定性占位向量，pipeline 不中断。
+        register_all()
+        self.embedding = get_plugin(self.config.embedding_impl,
+                                    dim=self.config.embedding_dimensions,
+                                    model_name=self.config.embedding_model)
+
+        # 真实 LLM 先验：未显式注入时，按 config.model_impl 装配轻量小模型。
+        # 无 key/解析失败回退 DEFAULT_WEIGHTS（与 D-11 同哲学），测试/离线不触发网络。
+        if llm_prior_fn is None and self.config.weight_impl == "weight.full":
+            llm_prior_fn = _make_real_llm_prior(self.config.model_impl)
+
         # 常驻完整池（per-user 真池）
-        pool_path = f"data/reme/{user_id}/main/resident_pool.jsonl"
+        pool_path = resident_pool_path or f"data/reme/{user_id}/main/resident_pool.jsonl"
         self.resident_pool = ResidentMemoryPool(user_id, session_id, pool_path)
 
         # 共享池（副线 workspace）
-        sp_path = f"data/reme/{user_id}/sub1/shared_pool.json"
+        sp_path = shared_pool_path or f"data/reme/{user_id}/sub1/shared_pool.json"
         self.shared_pool = SharedMemoryPool(max_size=self.config.max_shared, persist_path=sp_path)
 
         # 检索插件（config-as-composition：按 cfg.retriever_impl 从注册表取，§12.5）
-        register_all()
         if self.config.retriever_impl == "retriever.reme":
             self.retriever = get_plugin(self.config.retriever_impl,
                                         reme_search_callable=reme_search_callable)
@@ -99,7 +114,8 @@ class MemorySchedulingMiddleware:
         import time
         now = now if now is not None else time.time()
         if query_emb is None:
-            query_emb = _dummy_emb(self.config.embedding_dimensions)
+            # 真实 embedding：调用装配好的后端（无 key 自动降级占位向量，D-11）
+            query_emb = self.embedding.encode(query)
         # LLM 先验：query 文本 → 轻量小模型（可注入 fn；未注入回退默认权重）。
         # 桩/参考权重实现（weight.uniform / weight.reme）无 llm_prior/set_prior，跳过。
         if hasattr(self.weights, "llm_prior") and hasattr(self.weights, "set_prior"):
@@ -117,10 +133,64 @@ class MemorySchedulingMiddleware:
         self.shared_pool.persist()
         self.resident_pool.persist()
 
+    def api_status(self) -> dict:
+        """真实 API 运行状态（供控制台/监控告警）。
 
-def _dummy_emb(dim: int = 1024):
-    """无外部 embedding 时的占位向量（零向量 + 单位扰动，保证 cosine 可算）。"""
-    import numpy as np
-    emb = np.zeros(dim, dtype=np.float32)
-    emb[0] = 1.0
-    return emb
+        返回每个后端 {mode: real|fallback, error: None|{kind,code,message,ts}}。
+        kind ∈ balance/auth/forbidden/rate_limit/network/other —— 便于上层提示"余额不足"等。
+        """
+        llm_client = None
+        llm_fn = getattr(self.weights, "_llm_prior_fn", None)
+        if llm_fn is not None:
+            llm_client = getattr(llm_fn, "client", None)
+        return {
+            "embedding": {
+                "mode": _api_mode(self.embedding),
+                "error": getattr(self.embedding, "last_error", None),
+            },
+            "llm_prior": {
+                "mode": _api_mode(llm_client),
+                "error": getattr(llm_client, "last_error", None) if llm_client else None,
+            },
+        }
+
+
+def _make_real_llm_prior(model_impl: str):
+    """装配真实 LLM 先验函数（D-13）：调用 config.model_impl 轻量小模型。
+
+    提示词 + JSON 解析失败 / 无 key / 网络异常 → 回退 DEFAULT_WEIGHTS
+    （与 D-11 同哲学：真实链路主跑，异常自动降级，测试/离线不触发网络）。
+    """
+    from .weights import DEFAULT_WEIGHTS, LLM_PRIOR_PROMPT
+
+    try:
+        client = get_plugin(model_impl)
+    except Exception:  # noqa: BLE001 - 插件缺失时不阻断装配
+        client = None
+    if client is None or not getattr(client, "api_key", None):
+        return None
+
+    import json
+    import re
+
+    def _prior(query: str) -> dict:
+        try:
+            raw = client.complete(f"{LLM_PRIOR_PROMPT}\n用户查询：{query}", max_tokens=64)
+            m = re.search(r"\{[^}]*\}", raw or "")
+            w = json.loads(m.group(0)) if m else {}
+            w = {k: float(v) for k, v in w.items() if k in DEFAULT_WEIGHTS}
+            if len(w) != 4 or sum(w.values()) <= 0:
+                return dict(DEFAULT_WEIGHTS)
+            s = sum(w.values())
+            return {k: v / s for k, v in w.items()}
+        except Exception:  # noqa: BLE001 - 解析失败/网络异常降级默认权重
+            return dict(DEFAULT_WEIGHTS)
+
+    # 挂载 client 供 api_status() 读取 last_error（模型插件失败不再静默）
+    _prior.client = client  # type: ignore[attr-defined]
+    return _prior
+
+
+def _api_mode(client) -> str:
+    """client 是否处于真实模式（配置了 key）。"""
+    return "real" if getattr(client, "api_key", None) else "fallback"

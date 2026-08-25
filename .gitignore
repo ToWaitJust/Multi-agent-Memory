@@ -25,3 +25,8 @@ __pycache__/
 # 覆盖率产物
 .coverage
 .coverage.*
+
+# 敏感配置（真实密钥，严禁提交）
+.env
+.env.*
+!.env.example

@@ -1,0 +1,14 @@
+# srtp_memory 运行时依赖
+# 安装：pip install -r requirements.txt
+# 真实 API 密钥放本地 .env（复制 .env.example 填写），绝不提交
+numpy>=2.0
+pydantic>=2.0
+PyYAML>=6.0
+python-dotenv>=1.0
+torch>=2.0            # 混合权重 MLP（可学习权重）
+faiss>=1.9            # 常驻池向量索引（缺失时自动退化线性余弦）
+dashscope>=1.20       # 真实 embedding（text-embedding-v4）
+openai>=1.30          # 真实 LLM（DeepSeek 兼容端点）
+
+# 测试/开发依赖
+pytest>=8.0

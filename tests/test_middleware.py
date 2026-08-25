@@ -14,6 +14,8 @@ def test_middleware_schedule_once(tmp_path, monkeypatch):
                                 log_dir=str(tmp_path), run_id="test_run"),
         user_id="u_tu", session_id="sess_t",
         log_path=str(tmp_path / "schedule.jsonl"),
+        resident_pool_path=str(tmp_path / "rp.jsonl"),
+        shared_pool_path=str(tmp_path / "sp.json"),
         llm_prior_fn=lambda q: {"time": 0.25, "semantic": 0.35, "frequency": 0.15, "task": 0.25},
     )
     # 手动种入记忆（真实场景由 ReMe auto_memory → upsert）

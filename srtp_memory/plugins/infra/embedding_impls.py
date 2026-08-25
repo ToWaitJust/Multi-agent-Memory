@@ -1,12 +1,20 @@
 """基础设施层插件：向量后端（EmbeddingBackend，§12.2 归基础设施层）。
 
-- embed.dashscope ：DashScope text-embedding-v4（1024 维，D-5 首选）
-- embed.openai    ：OpenAI text-embedding-3-small（备选）
-- embed.local     ：本地 BGE（仅离线兜底，D-11）
-V2.1：embedding 多层兜底（重试→缓存→风控告警→bm25），完整实现在接真实 API 时落地；
-本骨架 encode 返回确定性占位向量（维度正确、值域安全），保证 pipeline 可跑。
+- embed.dashscope ：DashScope text-embedding-v4（1024 维，D-5 首选，已接真实 API）
+- embed.openai    ：OpenAI text-embedding-3-small（备选，已接真实 API）
+- embed.local     ：本地 BGE（仅离线兜底，D-11，占位实现）
+
+V2.1：embedding 多层兜底（D-11）——真实 API 主链路 → 结果缓存（同文本零调用）→
+API 异常时降级为确定性占位向量（保证 pipeline 可跑，语义分退回纯 bm25）。
+密钥一律从环境变量读取（.env 由 srtp_memory 包加载），绝不硬编码。
+
+可观测性（新增）：每次 API 失败记录 self.last_error = {kind, code, message, ts}，
+供调度中间件 api_status() 暴露给上层（控制台/监控）——降级不再静默。
 """
 from __future__ import annotations
+
+import os
+import time
 
 import numpy as np
 
@@ -14,11 +22,43 @@ from ..base import EmbeddingBackend
 from ..registry import register
 
 
+def classify_api_error(code, message) -> str:
+    """把 API 错误归类为可读类别（供告警提示，如"余额不足"）。"""
+    s = f"{code} {message}".lower()
+    if ("402" in s or "insufficient balance" in s or "余额" in s
+            or "quota" in s or "额度" in s or "overlimit" in s):
+        return "balance"
+    if ("401" in s or "invalid_api_key" in s or "authentication" in s
+            or "鉴权" in s or "apikey" in s):
+        return "auth"
+    if "403" in s or "forbidden" in s or "permission" in s or "无权" in s:
+        return "forbidden"
+    if "429" in s or "rate" in s or "limit" in s or "限流" in s or "throttl" in s:
+        return "rate_limit"
+    if ("timeout" in s or "timed out" in s or "connection" in s
+            or "网络" in s or "connect" in s or "resolve" in s):
+        return "network"
+    return "other"
+
+
 class _BaseEmbedding(EmbeddingBackend):
+    # 子类指定从哪个环境变量读取密钥（.env 由 srtp_memory 包加载）
+    env_var: str = "DASHSCOPE_API_KEY"
+
     def __init__(self, dim: int = 1024, api_key: str | None = None, model_name: str | None = None):
         self._dim = dim
-        self.api_key = api_key
+        # api_key 未显式传入时，从环境变量兜底读取（绝不硬编码）
+        self.api_key = api_key or os.environ.get(self.env_var)
         self.model_name = model_name or self._default_model()
+        self._cache: dict[str, np.ndarray] = {}
+        # 最近一次 API 错误（无错误为 None）——供中间件 api_status() 暴露
+        self.last_error: dict | None = None
+
+    def _record_api_error(self, code, message) -> None:
+        self.last_error = {
+            "kind": classify_api_error(code, message),
+            "code": str(code), "message": str(message), "ts": time.time(),
+        }
 
     def _default_model(self) -> str:
         raise NotImplementedError
@@ -26,10 +66,8 @@ class _BaseEmbedding(EmbeddingBackend):
     def dim(self) -> int:
         return self._dim
 
-    def encode(self, text: str) -> np.ndarray:
-        # 占位实现：确定性哈希向量（接真实 API 时替换为模型调用）
-        if not text:
-            return np.zeros(self._dim, dtype=np.float32)
+    def _placeholder_encode(self, text: str) -> np.ndarray:
+        """确定性哈希占位向量（D-11 兜底）：同文本恒等、单位范数、值域安全。"""
         import hashlib
         h = int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:8], 16)
         rng = np.random.default_rng(h)
@@ -37,17 +75,63 @@ class _BaseEmbedding(EmbeddingBackend):
         n = np.linalg.norm(v)
         return v / n if n > 0 else v
 
+    def _api_encode(self, text: str) -> np.ndarray | None:
+        """真实 API 调用（子类实现）；失败抛异常 / 无 key 返回 None。"""
+        raise NotImplementedError
+
+    def encode(self, text: str) -> np.ndarray:
+        """真实 API 优先，缓存命中零调用，失败降级占位向量（D-11）。"""
+        if not text:
+            return np.zeros(self._dim, dtype=np.float32)
+        cached = self._cache.get(text)
+        if cached is not None:
+            return cached
+        try:
+            v = self._api_encode(text)
+            if v is not None:
+                self._cache[text] = v
+                return v
+        except Exception as e:  # noqa: BLE001 - API 异常按 D-11 降级，不阻塞 pipeline
+            self._record_api_error(getattr(e, "code", "") or getattr(e, "status_code", "") or type(e).__name__,
+                                   str(e))
+        return self._placeholder_encode(text)
+
 
 @register("embed.dashscope", "embed")
 class DashScopeEmbedding(_BaseEmbedding):
     def _default_model(self) -> str:
         return "text-embedding-v4"
 
+    def _api_encode(self, text: str) -> np.ndarray | None:
+        if not self.api_key:
+            return None
+        from dashscope import TextEmbedding
+        resp = TextEmbedding.call(model=self.model_name, input=text, api_key=self.api_key)
+        if resp.status_code != 200:
+            self._record_api_error(resp.status_code, resp.message or resp.code)
+            raise RuntimeError(f"dashscope embed {resp.status_code}: {resp.message}")
+        v = np.asarray(resp.output["embeddings"][0]["embedding"], dtype=np.float32)
+        n = np.linalg.norm(v)
+        return v / n if n > 0 else v
+
 
 @register("embed.openai", "embed")
 class OpenAIEmbedding(_BaseEmbedding):
+    env_var = "OPENAI_API_KEY"
+
     def _default_model(self) -> str:
         return "text-embedding-3-small"
+
+    def _api_encode(self, text: str) -> np.ndarray | None:
+        if not self.api_key:
+            return None
+        from openai import OpenAI
+        resp = OpenAI(api_key=self.api_key).embeddings.create(
+            model=self.model_name, input=text,
+        )
+        v = np.asarray(resp.data[0].embedding, dtype=np.float32)
+        n = np.linalg.norm(v)
+        return v / n if n > 0 else v
 
 
 @register("embed.local", "embed")
@@ -57,3 +141,7 @@ class LocalBGEEmbedding(_BaseEmbedding):
 
     def _default_model(self) -> str:
         return "bge-large-zh"
+
+    def _api_encode(self, text: str) -> np.ndarray | None:
+        # 本地 BGE 仅离线兜底：不接 API，直接走占位向量
+        return None

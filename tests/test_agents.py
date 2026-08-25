@@ -35,8 +35,10 @@ def test_embedding_plugin_dim():
     assert abs(float(np.linalg.norm(v)) - 1.0) < 1e-3  # 单位向量
 
 
-def test_model_adapters_need_key():
+def test_model_adapters_need_key(monkeypatch):
     register_all()
+    # 与真实环境隔离：即使本机配了 DEEPSEEK_API_KEY，本用例也按"未配置"走
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     m = get_plugin("model.deepseek")
     assert m.name() == "model.deepseek"
     try:
