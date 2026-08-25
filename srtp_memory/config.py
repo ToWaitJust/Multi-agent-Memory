@@ -32,7 +32,8 @@ class SchedulingConfig(BaseModel):
     embedding_provider: str = "dashscope"   # dashscope / openai / local
     embedding_model: str = "text-embedding-v4"   # embedding 模型名
     embedding_dimensions: int = 1024   # 向量维度（DashScope text-embedding-v4=1024）
-    embedding_cache: bool = True       # 启用 AgentScope 内置 embedding 缓存
+    embedding_cache: bool = True       # 启用 embedding 缓存
+    embedding_cache_dir: str = "data/embed_cache"  # 落盘缓存目录（真实向量写盘复用，可复现；data/ 已 gitignore）
 
     # ---- 监控 / 实验（FR-9 / FR-10）----
     log_dir: str = "data/metrics"     # L3 埋点目录

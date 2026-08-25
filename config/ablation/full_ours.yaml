@@ -1,5 +1,8 @@
 # ablation/full_ours.yaml —— 完整方案（§9.4 / §12.7）
-retriever_impl: retriever.bm25      # 定稿：bm25（与 +attention/+weight 同基座，归因干净）
+# 2026-08-25 变更：检索器升级为语义向量检索器 retriever.vector（真实 DashScope embedding + faiss 余弦）。
+# 注意：此变更使 full_ours 与 +attention/+weight（仍用 retriever.bm25）不再共享同一检索基座，
+# "+weight→full_ours" 增量因此混入 检索器变化（bm25→vector）。若需严格纯净归因，应把三组共享基座一并升 vector（见文档 §1131 注）。
+retriever_impl: retriever.vector     # 语义向量检索器（真实 DashScope + faiss 余弦，NFR-2 <100ms）
 attention_impl: attention.full
 weight_impl:    weight.full
 selector_impl:  selector.full

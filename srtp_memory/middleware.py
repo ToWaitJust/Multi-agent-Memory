@@ -18,6 +18,7 @@ from .plugins import get_plugin, register_all  # 注册表装配（§12.4/§12.5
 from .resident_pool import ResidentMemoryPool
 from .shared_pool import SharedMemoryPool
 from .weights import HybridWeightCalculator
+from .attention import MemoryCandidate
 
 
 class MemorySchedulingMiddleware:
@@ -43,7 +44,8 @@ class MemorySchedulingMiddleware:
         register_all()
         self.embedding = get_plugin(self.config.embedding_impl,
                                     dim=self.config.embedding_dimensions,
-                                    model_name=self.config.embedding_model)
+                                    model_name=self.config.embedding_model,
+                                    cache_dir=self.config.embedding_cache_dir)
 
         # 真实 LLM 先验：未显式注入时，按 config.model_impl 装配轻量小模型。
         # 无 key/解析失败回退 DEFAULT_WEIGHTS（与 D-11 同哲学），测试/离线不触发网络。
@@ -127,6 +129,29 @@ class MemorySchedulingMiddleware:
             now=now, enabled_dims=enabled_dims, condition=cond,
             top_k=self.config.candidate_override,
         )
+
+    def add_memory(self, text: str, memory_id: str | None = None,
+                   task_tag: str | None = None, path: str = "memory.md",
+                   timestamp: float | None = None) -> "MemoryCandidate":
+        """写入一条记忆（真实场景由 ReMe auto_memory / 副线回写触发）。
+
+        关键：入库即算 embedding 并 upsert 进常驻池向量索引 —— 否则 retriever.vector
+        无语料可检（空结果）。embedding 走装配后端（真实 API + 落盘缓存 / 无 key 降级占位）。
+        不触发 LLM，纯embedding 调用；与 schedule_once 解耦，可批量灌库（消融数据集加载）。
+        """
+        import time
+        import uuid
+
+        ts = timestamp if timestamp is not None else time.time()
+        mid = memory_id or f"m_{uuid.uuid4().hex[:12]}"
+        emb = self.embedding.encode(text)
+        cand = MemoryCandidate(
+            memory_id=mid, text=text, path=path, timestamp=ts,
+            task_tag=task_tag, user_id=self.user_id, session_id=self.session_id,
+            embedding=emb,
+        )
+        self.resident_pool.upsert(cand)
+        return cand
 
     def flush(self) -> None:
         self.logger.flush()

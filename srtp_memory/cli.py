@@ -34,12 +34,10 @@ def run_one(config_path: str | Path, query: str = "多智能体记忆共享调�
         log_path="data/metrics/schedule.jsonl",
         llm_prior_fn=_prior,
     )
-    # 种入一条种子记忆（真实场景由 ReMe auto_memory 写入）
-    from .attention import MemoryCandidate
-    mid.resident_pool.upsert(MemoryCandidate(
-        memory_id=f"seed_{seed}", text="多智能体记忆共享调度方法研究：四维注意力+LLM可学习权重",
-        path="daily/seed.md", timestamp=time.time(), task_tag="main_task",
-        user_id="u_tu", session_id=f"sess_{seed}"))
+    # 种入一条种子记忆（真实场景由 ReMe auto_memory 写入；此处入库即算 embedding）
+    mid.add_memory(
+        text="多智能体记忆共享调度方法研究：四维注意力+LLM可学习权重",
+        memory_id=f"seed_{seed}", task_tag="main_task", path="daily/seed.md")
 
     cond = ConditionKey.parse(cfg.condition_key)
     res = mid.schedule_once(query, task_tag=cfg.task_tag, condition=cond)

@@ -13,6 +13,8 @@ API 异常时降级为确定性占位向量（保证 pipeline 可跑，语义分
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import time
 
@@ -45,14 +47,46 @@ class _BaseEmbedding(EmbeddingBackend):
     # 子类指定从哪个环境变量读取密钥（.env 由 srtp_memory 包加载）
     env_var: str = "DASHSCOPE_API_KEY"
 
-    def __init__(self, dim: int = 1024, api_key: str | None = None, model_name: str | None = None):
+    def __init__(self, dim: int = 1024, api_key: str | None = None,
+                 model_name: str | None = None, cache_dir: str | None = None):
         self._dim = dim
         # api_key 未显式传入时，从环境变量兜底读取（绝不硬编码）
         self.api_key = api_key or os.environ.get(self.env_var)
         self.model_name = model_name or self._default_model()
         self._cache: dict[str, np.ndarray] = {}
+        # 落盘缓存（D-11/可复现）：真实向量写盘，重启后复用，避免重复调 API
+        self._cache_dir = cache_dir
+        self._cache_file = None
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+            self._cache_file = os.path.join(cache_dir, f"{self.__class__.__name__}.jsonl")
+            self._load_disk_cache()
         # 最近一次 API 错误（无错误为 None）——供中间件 api_status() 暴露
         self.last_error: dict | None = None
+
+    def _load_disk_cache(self) -> None:
+        """启动时把已有真实向量载入内存（仅真实向量，占位向量不落盘）。"""
+        if not self._cache_file or not os.path.exists(self._cache_file):
+            return
+        with open(self._cache_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    v = np.asarray(rec["vec"], dtype=np.float32)
+                    if v.shape[0] == self._dim:
+                        self._cache[rec["text"]] = v
+                except Exception:  # noqa: BLE001 - 单条损坏不影响整体
+                    continue
+
+    def _persist(self, text: str, vec: np.ndarray) -> None:
+        """真实向量追加写盘（每次 API 成功调用一次）。"""
+        if not self._cache_file:
+            return
+        with open(self._cache_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"text": text, "vec": vec.tolist()}, ensure_ascii=False) + "\n")
 
     def _record_api_error(self, code, message) -> None:
         self.last_error = {
@@ -80,7 +114,11 @@ class _BaseEmbedding(EmbeddingBackend):
         raise NotImplementedError
 
     def encode(self, text: str) -> np.ndarray:
-        """真实 API 优先，缓存命中零调用，失败降级占位向量（D-11）。"""
+        """真实 API 优先，缓存命中零调用，失败降级占位向量（D-11）。
+
+        真实向量同时写落盘缓存（cache_dir），重启后复用 → 一次性成本、完全可复现。
+        占位向量不落盘，确保日后补 key 时能取到真实向量而非陈旧占位。
+        """
         if not text:
             return np.zeros(self._dim, dtype=np.float32)
         cached = self._cache.get(text)
@@ -90,6 +128,7 @@ class _BaseEmbedding(EmbeddingBackend):
             v = self._api_encode(text)
             if v is not None:
                 self._cache[text] = v
+                self._persist(text, v)
                 return v
         except Exception as e:  # noqa: BLE001 - API 异常按 D-11 降级，不阻塞 pipeline
             self._record_api_error(getattr(e, "code", "") or getattr(e, "status_code", "") or type(e).__name__,
