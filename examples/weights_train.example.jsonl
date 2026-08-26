@@ -1,0 +1,20 @@
+{"query":"我们最新一版消融实验跑了哪 5 组？","condition":{"user_id":"u_tu","scenario_id":"research","business_id":"srtp"},"target_weights":{"time":0.35,"semantic":0.40,"frequency":0.10,"task":0.15}}
+{"query":"之前那版调度器的双池同步延迟是怎么处理的？","condition":{"user_id":"u_tu","scenario_id":"research","business_id":"srtp"},"target_weights":{"time":0.20,"semantic":0.45,"frequency":0.15,"task":0.20}}
+{"query":"ReMe 和我们的记忆共享调度在架构上根本区别是什么？","condition":{"user_id":"u_tu","scenario_id":"research","business_id":"srtp"},"target_weights":{"time":0.10,"semantic":0.50,"frequency":0.10,"task":0.30}}
+{"query":"写论文 Related Work 时，我之前整理的 ReMe 对比要点有哪些？","condition":{"user_id":"u_tu","scenario_id":"writing","business_id":"srtp"},"target_weights":{"time":0.15,"semantic":0.35,"frequency":0.10,"task":0.40}}
+{"query":"论文第四章实验设计里常引用的那组基线数据在哪？","condition":{"user_id":"u_tu","scenario_id":"writing","business_id":"srtp"},"target_weights":{"time":0.15,"semantic":0.40,"frequency":0.05,"task":0.40}}
+{"query":"调 API 那段代码，你之前常用的重试封装是怎么写的？","condition":{"user_id":"u_tu","scenario_id":"coding","business_id":"srtp"},"target_weights":{"time":0.10,"semantic":0.30,"frequency":0.30,"task":0.30}}
+{"query":"这个 400 错误我反复遇到，之前怎么排查的？","condition":{"user_id":"u_tu","scenario_id":"coding","business_id":"srtp"},"target_weights":{"time":0.20,"semantic":0.30,"frequency":0.35,"task":0.15}}
+{"query":"明天的答辩我该重点准备哪几个问题？","condition":{"user_id":"u_tu","scenario_id":"meeting","business_id":"srtp"},"target_weights":{"time":0.30,"semantic":0.30,"frequency":0.10,"task":0.30}}
+{"query":"上周组会大家对我方案的主要疑问是什么？","condition":{"user_id":"u_tu","scenario_id":"meeting","business_id":"srtp"},"target_weights":{"time":0.40,"semantic":0.35,"frequency":0.10,"task":0.15}}
+{"query":"共享池上限从 10 调到 8 的影响是什么？","condition":{"user_id":"u_tu","scenario_id":"research","business_id":"srtp"},"target_weights":{"time":0.15,"semantic":0.45,"frequency":0.15,"task":0.25}}
+{"query":"我们课题为什么选 DashScope 而不是本地 BGE？","condition":{"user_id":"u_tu","scenario_id":"research","business_id":"srtp"},"target_weights":{"time":0.10,"semantic":0.50,"frequency":0.10,"task":0.30}}
+{"query":"写中期报告时，项目背景那一段我之前用的措辞是什么？","condition":{"user_id":"u_tu","scenario_id":"writing","business_id":"srtp"},"target_weights":{"time":0.20,"semantic":0.40,"frequency":0.05,"task":0.35}}
+{"query":"debug 那段脚本你最常用的打印变量套路是啥？","condition":{"user_id":"u_tu","scenario_id":"coding","business_id":"srtp"},"target_weights":{"time":0.10,"semantic":0.30,"frequency":0.30,"task":0.30}}
+{"query":"最近一次评审专家给我们的核心修改意见有哪些？","condition":{"user_id":"u_tu","scenario_id":"meeting","business_id":"srtp"},"target_weights":{"time":0.45,"semantic":0.30,"frequency":0.10,"task":0.15}}
+{"query":"BERT 和 DashScope 向量维度差异对我们检索器有什么影响？","condition":{"user_id":"u_tu","scenario_id":"research","business_id":"srtp"},"target_weights":{"time":0.10,"semantic":0.50,"frequency":0.10,"task":0.30}}
+{"query":"写论文实验章节时，我最常用的那张消融图在哪里？","condition":{"user_id":"u_tu","scenario_id":"writing","business_id":"srtp"},"target_weights":{"time":0.15,"semantic":0.35,"frequency":0.10,"task":0.40}}
+{"query":"这个接口字段我之前对接过几次，标准用法是什么？","condition":{"user_id":"u_tu","scenario_id":"coding","business_id":"srtp"},"target_weights":{"time":0.10,"semantic":0.30,"frequency":0.35,"task":0.25}}
+{"query":"答辩 PPT 里老师最关心的方法创新点怎么讲？","condition":{"user_id":"u_tu","scenario_id":"meeting","business_id":"srtp"},"target_weights":{"time":0.25,"semantic":0.30,"frequency":0.05,"task":0.40}}
+{"query":"多智能体记忆共享的核心创新点用一句话怎么概括？","condition":{"user_id":"u_tu","scenario_id":"research","business_id":"srtp"},"target_weights":{"time":0.10,"semantic":0.45,"frequency":0.10,"task":0.35}}
+{"query":"日常有什么顺手的笔记整理方法推荐？","condition":{"user_id":"u_tu","scenario_id":"daily","business_id":"srtp"},"target_weights":{"time":0.10,"semantic":0.55,"frequency":0.20,"task":0.15}}

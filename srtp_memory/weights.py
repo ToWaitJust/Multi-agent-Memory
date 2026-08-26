@@ -6,8 +6,10 @@ V2.1 定稿：可学习 MLP 输入 = query_emb(1024) 拼接 condition_emb(32) �
 """
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -82,6 +84,71 @@ class _ConditionedMLP:
         self._net.eval()
         return float(loss.item())
 
+    def fit(self, dataset: list, batch_size: int = 16, epochs: int = 20,
+            lr: float = 1e-3, weight_decay: float = 1e-4,
+            val_split: float = 0.0, seed: int = 42) -> dict:
+        """批量 MSE 蒸馏训练（替代逐样本 step，更稳定、可复现）。
+
+        dataset: list[(query_emb, condition_emb, target_w_np(4))]
+        损失：MSE(softmax(net(x)), target)，与 step 一致（soft 分布匹配，非 one-hot）。
+        优化：Adam + weight_decay；每 epoch 打乱训练集；可选验证切分监控过拟合。
+        返回 {history:[{epoch,train_loss,val_loss}], final_train_loss, final_val_loss}。
+        """
+        if not dataset:
+            return {"history": [], "final_train_loss": 0.0, "final_val_loss": 0.0}
+        rng = np.random.default_rng(seed)
+        X = np.stack([self._feat_vec(q, c) for (q, c, _) in dataset])
+        Y = np.stack([np.asarray(t, dtype=np.float32) for (_, _, t) in dataset])
+        n = len(dataset)
+        n_val = int(n * val_split) if 0.0 < val_split < 1.0 else 0
+        perm_all = rng.permutation(n)
+        val_idx = perm_all[:n_val]
+        train_idx = perm_all[n_val:]
+
+        self._net.train()
+        opt = torch.optim.Adam(self._net.parameters(), lr=lr, weight_decay=weight_decay)
+        history = []
+        for ep in range(epochs):
+            perm = rng.permutation(len(train_idx))
+            train_losses = []
+            for i in range(0, len(train_idx), max(1, batch_size)):
+                b = train_idx[perm[i:i + batch_size]]
+                xb = torch.from_numpy(X[b])
+                yb = torch.from_numpy(Y[b])
+                opt.zero_grad()
+                out = self._net(xb)
+                loss = torch.nn.functional.mse_loss(torch.softmax(out, dim=-1), yb)
+                loss.backward()
+                opt.step()
+                train_losses.append(loss.item())
+            self._net.eval()
+            val_loss = None
+            if n_val > 0:
+                with torch.no_grad():
+                    vout = self._net(torch.from_numpy(X[val_idx]))
+                    val_loss = torch.nn.functional.mse_loss(
+                        torch.softmax(vout, dim=-1), torch.from_numpy(Y[val_idx])).item()
+            history.append({
+                "epoch": ep + 1,
+                "train_loss": float(np.mean(train_losses)) if train_losses else 0.0,
+                "val_loss": val_loss,
+            })
+            self._net.train()
+        self._net.eval()
+        return {
+            "history": history,
+            "final_train_loss": history[-1]["train_loss"],
+            "final_val_loss": history[-1]["val_loss"],
+        }
+
+    def save(self, path: str) -> None:
+        """持久化 MLP 权重（state_dict）。训练产物落盘，供推理加载。"""
+        torch.save(self._net.state_dict(), path)
+
+    def load(self, path: str) -> None:
+        """从 state_dict 载入 MLP 权重。"""
+        self._net.load_state_dict(torch.load(path, map_location="cpu"))
+
 
 class HybridWeightCalculator:
     """条件化混合权重（默认完整实现，插件名 weight.full）。"""
@@ -138,19 +205,75 @@ class HybridWeightCalculator:
         c_emb = self.condition_store.embed(condition)
         return self.mlp.forward(query_emb, c_emb)
 
-    def pretrain_distill(self, prior_dataset: list) -> dict[str, float]:
-        """离线预训练（阶段一）：MSE 蒸馏 LLM 先验。
+    def pretrain_distill(self, prior_dataset: list, batch_size: int = 16,
+                          epochs: int = 20, lr: float = 1e-3,
+                          weight_decay: float = 1e-4, val_split: float = 0.0) -> dict:
+        """离线预训练（阶段一，批量版）：MSE 蒸馏目标权重。
 
         prior_dataset: list of (query_emb, condition_key, target_w_dict)
-        target_w = LLM 先验权重（多次采样平均、归一化）。返回平均 loss。
+        target_w = 目标权重（外包标签/LLM 先验，多次采样平均、归一化）。
+        内部转为 (query_emb, condition_emb, target_np) 调 _ConditionedMLP.fit 批量训练。
+        返回 {avg_loss, history, final_train_loss, final_val_loss}。
         """
-        losses = []
+        if not prior_dataset:
+            return {"avg_loss": 0.0, "history": [], "final_train_loss": 0.0, "final_val_loss": 0.0}
+        fit_ds = []
         for q_emb, cond, target_w in prior_dataset:
             c_emb = self.condition_store.embed(cond)
             t = np.array([target_w["time"], target_w["semantic"],
                           target_w["frequency"], target_w["task"]], dtype=np.float32)
-            losses.append(self.mlp.step(q_emb, c_emb, t))
-        return {"avg_loss": float(np.mean(losses)) if losses else 0.0}
+            fit_ds.append((q_emb, c_emb, t))
+        res = self.mlp.fit(fit_ds, batch_size=batch_size, epochs=epochs,
+                           lr=lr, weight_decay=weight_decay, val_split=val_split)
+        return {"avg_loss": res["final_train_loss"], **res}
+
+    def pretrain_from_jsonl(self, jsonl_path: str, embed_fn: Callable[[str], np.ndarray],
+                            batch_size: int = 16, epochs: int = 20, lr: float = 1e-3,
+                            weight_decay: float = 1e-4, val_split: float = 0.1,
+                            use_labels_as_prior: bool = True) -> dict:
+        """从作者格式 JSONL 读取训练集并批量蒸馏（第二种喂法默认开启）。
+
+        jsonl 每行：{"query":str, "condition":{user_id,scenario_id,business_id},
+                     "target_weights":{time,semantic,frequency,task}}
+        embed_fn: 文本→1024 维向量（必须与推理同源：DashScope text-embedding-v4）。
+        use_labels_as_prior=True（第二种喂法）：把标签建为精确查询→权重查表，
+        注入 llm_prior_fn，使推理命中训练集时先验直接取该标签（外包标签主导），
+        未命中则由蒸馏后的 MLP 泛化给出并被 α 地板约束防崩。
+        返回与 pretrain_distill 一致的训练结果 dict。
+        """
+        prior_dataset = []
+        label_index: dict[str, dict[str, float]] = {}
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                q = rec["query"]
+                cond_d = rec.get("condition") or {}
+                cond = ConditionKey(user_id=cond_d.get("user_id"),
+                                    scenario_id=cond_d.get("scenario_id"),
+                                    business_id=cond_d.get("business_id"))
+                tw = rec["target_weights"]
+                target_w = {"time": float(tw["time"]), "semantic": float(tw["semantic"]),
+                            "frequency": float(tw["frequency"]), "task": float(tw["task"])}
+                q_emb = embed_fn(q)
+                prior_dataset.append((q_emb, cond, target_w))
+                if use_labels_as_prior:
+                    label_index[q] = self._normalize(target_w)
+        if use_labels_as_prior and label_index:
+            self._llm_prior_fn = lambda q: label_index.get(q, dict(DEFAULT_WEIGHTS))
+        return self.pretrain_distill(prior_dataset, batch_size=batch_size, epochs=epochs,
+                                     lr=lr, weight_decay=weight_decay, val_split=val_split)
+
+    def save_weights(self, path: str) -> None:
+        """持久化可学习 MLP 权重到文件。"""
+        os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+        self.mlp.save(path)
+
+    def load_weights(self, path: str) -> None:
+        """从文件载入可学习 MLP 权重。"""
+        self.mlp.load(path)
 
     def update_with_feedback(self, query_emb: np.ndarray, reward: float,
                              condition: ConditionKey) -> dict[str, float]:
