@@ -1,0 +1,602 @@
+{
+  "nodes": [
+    {
+      "node_id": "M1",
+      "topic": "todo-cli·配置模块",
+      "summary": "配置模块：围绕配置文件加载、默认值、路径解析的设计决策与实现细节。",
+      "task_tag": "config"
+    },
+    {
+      "node_id": "M2",
+      "topic": "todo-cli·存储模块",
+      "summary": "存储模块：围绕JSON 持久化、schema 字段、读写的设计决策与实现细节。",
+      "task_tag": "storage"
+    },
+    {
+      "node_id": "M3",
+      "topic": "todo-cli·核心逻辑",
+      "summary": "核心逻辑：围绕增删改查、优先级、截止日期的设计决策与实现细节。",
+      "task_tag": "core"
+    },
+    {
+      "node_id": "M6",
+      "topic": "todo-cli·异常与日志",
+      "summary": "异常与日志：围绕异常分类、日志格式的设计决策与实现细节。",
+      "task_tag": "exlog"
+    },
+    {
+      "node_id": "M4",
+      "topic": "todo-cli·命令行解析",
+      "summary": "命令行解析：围绕子命令、参数、帮助文本的设计决策与实现细节。",
+      "task_tag": "cli"
+    },
+    {
+      "node_id": "M5",
+      "topic": "todo-cli·统计报表",
+      "summary": "统计报表：围绕完成率、逾期统计、周报输出的设计决策与实现细节。",
+      "task_tag": "stats"
+    }
+  ],
+  "edges": [
+    {
+      "src": "M1",
+      "dst": "M3",
+      "type": "depends_on",
+      "strength": 0.8
+    },
+    {
+      "src": "M2",
+      "dst": "M3",
+      "type": "depends_on",
+      "strength": 0.8
+    },
+    {
+      "src": "M3",
+      "dst": "M4",
+      "type": "depends_on",
+      "strength": 0.8
+    },
+    {
+      "src": "M3",
+      "dst": "M5",
+      "type": "depends_on",
+      "strength": 0.8
+    },
+    {
+      "src": "M2",
+      "dst": "M5",
+      "type": "depends_on",
+      "strength": 0.8
+    },
+    {
+      "src": "M1",
+      "dst": "M6",
+      "type": "depends_on",
+      "strength": 0.8
+    },
+    {
+      "src": "M2",
+      "dst": "M6",
+      "type": "depends_on",
+      "strength": 0.8
+    }
+  ],
+  "memories": [
+    {
+      "memory_id": "rm0000",
+      "node_id": "M1",
+      "text": "配置文件路径硬编码为 `~/.todo-cli/config.json`，由 `get_config_path()` 函数通过 `pathlib.Path.home() / \".todo-cli\" / \"config.json\"` 构造",
+      "timestamp": 1780000000.0,
+      "access_count": 0,
+      "task_tag": "config"
+    },
+    {
+      "memory_id": "rm0001",
+      "node_id": "M1",
+      "text": "默认配置字典在 `config.py` 中定义为常量 `DEFAULT_CONFIG = {\"data_file\": \"~/.todo-cli/tasks.json\", \"default_priority\": \"medium\", \"date_format\": \"%Y-%m-%d\"}",
+      "timestamp": 1780003600.0,
+      "access_count": 1,
+      "task_tag": "config"
+    },
+    {
+      "memory_id": "rm0002",
+      "node_id": "M1",
+      "text": "load_config()` 函数在首次调用时自动创建父目录 `~/.todo-cli/`（使用 `config_path.parent.mkdir(parents=True, exist_ok=True)`），若配置文件不存在则写入 `DEFAULT_CONFIG`（JSON 格式，带 2 空格缩进）",
+      "timestamp": 1780007200.0,
+      "access_count": 2,
+      "task_tag": "config"
+    },
+    {
+      "memory_id": "rm0003",
+      "node_id": "M1",
+      "text": "所有路径字段（如 `data_file`）在 `load_config()` 返回前经 `os.path.expanduser()` 和 `pathlib.Path.resolve()` 规范化，确保 `config[\"data_file\"]` 恒为绝对路径",
+      "timestamp": 1780010800.0,
+      "access_count": 3,
+      "task_tag": "config"
+    },
+    {
+      "memory_id": "rm0004",
+      "node_id": "M1",
+      "text": "配置加载失败（JSONDecodeError / PermissionError / OSError）时，`load_config()` 抛出自定义异常 `ConfigLoadError`（定义在 `config.py` 中），不静默降级",
+      "timestamp": 1780014400.0,
+      "access_count": 4,
+      "task_tag": "config"
+    },
+    {
+      "memory_id": "rm0005",
+      "node_id": "M1",
+      "text": "字段名：`CONFIG_DIR_NAME` 常量定义为字符串 `\".todo-cli\"`，用于统一配置目录名称，避免硬编码散落",
+      "timestamp": 1780018000.0,
+      "access_count": 5,
+      "task_tag": "config"
+    },
+    {
+      "memory_id": "rm0006",
+      "node_id": "M1",
+      "text": "函数签名：`def get_config_path() -> pathlib.Path:`，返回解析后的绝对路径，自动创建父目录（`path.parent.mkdir(parents=True, exist_ok=True)`）",
+      "timestamp": 1780021600.0,
+      "access_count": 0,
+      "task_tag": "config"
+    },
+    {
+      "memory_id": "rm0007",
+      "node_id": "M1",
+      "text": "文件布局：配置模块位于 `todo_cli/config/` 包内，主入口为 `todo_cli/config/__init__.py`，其中导出 `get_config_path` 和 `load_config",
+      "timestamp": 1780025200.0,
+      "access_count": 1,
+      "task_tag": "config"
+    },
+    {
+      "memory_id": "rm0008",
+      "node_id": "M1",
+      "text": "文件布局：`todo_cli/config/__init__.py` 中仅含核心逻辑，不依赖其他子模块（如 `storage` 或 `cli`），确保启动时零耦合加载",
+      "timestamp": 1780028800.0,
+      "access_count": 2,
+      "task_tag": "config"
+    },
+    {
+      "memory_id": "rm0009",
+      "node_id": "M2",
+      "text": "数据文件路径硬编码为 `./data/todo.json`，由 `STORAGE_PATH` 常量在 `storage.py` 中定义",
+      "timestamp": 1780032400.0,
+      "access_count": 3,
+      "task_tag": "storage"
+    },
+    {
+      "memory_id": "rm0010",
+      "node_id": "M2",
+      "text": "JSON schema 强制要求每个待办项包含且仅包含 4 个字段：`\"id\"`（int）、`\"text\"`（str）、`\"done\"`（bool）、`\"created_at\"`（ISO 8601 str，如 `\"2024-05-20T14:23:00Z\"`）",
+      "timestamp": 1780036000.0,
+      "access_count": 4,
+      "task_tag": "storage"
+    },
+    {
+      "memory_id": "rm0011",
+      "node_id": "M2",
+      "text": "读取函数命名为 `load_todos()`，位于 `storage.py`，返回 `list[dict]`",
+      "timestamp": 1780039600.0,
+      "access_count": 5,
+      "task_tag": "storage"
+    },
+    {
+      "memory_id": "rm0012",
+      "node_id": "M2",
+      "text": "若文件不存在或 JSON 解析失败，返回空列表 `[]` 并静默记录 WARNING 日志",
+      "timestamp": 1780043200.0,
+      "access_count": 0,
+      "task_tag": "storage"
+    },
+    {
+      "memory_id": "rm0013",
+      "node_id": "M2",
+      "text": "写入函数命名为 `save_todos(todos: list[dict])`，位于 `storage.py`，每次调用前先校验每个 dict 是否符合 schema（使用 `_validate_todo_item(item)` 私有函数），校验失败则抛出 `ValueError",
+      "timestamp": 1780046800.0,
+      "access_count": 1,
+      "task_tag": "storage"
+    },
+    {
+      "memory_id": "rm0014",
+      "node_id": "M2",
+      "text": "所有 I/O 操作使用 `utf-8` 编码显式打开文件，`save_todos()` 中调用 `json.dump(todos, f, indent=2, ensure_ascii=False)` 保证中文可读且格式化",
+      "timestamp": 1780050400.0,
+      "access_count": 2,
+      "task_tag": "storage"
+    },
+    {
+      "memory_id": "rm0015",
+      "node_id": "M2",
+      "text": "STORAGE_PATH` 常量在 `storage.py` 中定义为字符串字面量：`STORAGE_PATH = \"./data/todo.json\"`，路径不依赖环境变量或配置文件",
+      "timestamp": 1780054000.0,
+      "access_count": 3,
+      "task_tag": "storage"
+    },
+    {
+      "memory_id": "rm0016",
+      "node_id": "M2",
+      "text": "load_todos()` 函数签名：`def load_todos() -> List[Dict[str, Union[str, bool, int, datetime]]]`，负责读取 JSON 文件并返回解析后的待办项列表（若文件不存在或为空则返回空列表）",
+      "timestamp": 1780057600.0,
+      "access_count": 4,
+      "task_tag": "storage"
+    },
+    {
+      "memory_id": "rm0017",
+      "node_id": "M2",
+      "text": "save_todos(todos: List[Dict]) -> None` 函数签名：接收标准化 todo 字典列表，以 UTF-8 编码、无缩进、`ensure_ascii=False` 写入 `STORAGE_PATH`，写入前确保 `./data/` 目录存在（自动创建）",
+      "timestamp": 1780061200.0,
+      "access_count": 5,
+      "task_tag": "storage"
+    },
+    {
+      "memory_id": "rm0018",
+      "node_id": "M3",
+      "text": "核心逻辑模块不直接读写 `STORAGE_PATH`（`./data/todo.json`），而是通过 `storage.py` 中的 `load_todos()` 和新增的 `save_todos(todos: list[dict])` 函数与存储模块交互",
+      "timestamp": 1780064800.0,
+      "access_count": 0,
+      "task_tag": "core"
+    },
+    {
+      "memory_id": "rm0019",
+      "node_id": "M3",
+      "text": "待办项优先级不存入 JSON 数据文件（因 M2 存储模块 schema 禁止额外字段），而是在 `core.py` 的 `list_todos()` 函数中按 `priority` 字段（来自配置 `default_priority` 或显式传入）动态计算排序权重，仅用于内存中展示排序",
+      "timestamp": 1780068400.0,
+      "access_count": 1,
+      "task_tag": "core"
+    },
+    {
+      "memory_id": "rm0020",
+      "node_id": "M3",
+      "text": "截止日期（`due_date`）作为可选参数传入 `add_todo()` 和 `update_todo(id: int, **kwargs)`，但不写入 JSON",
+      "timestamp": 1780072000.0,
+      "access_count": 2,
+      "task_tag": "core"
+    },
+    {
+      "memory_id": "rm0021",
+      "node_id": "M3",
+      "text": "`core.py` 中的 `get_due_tasks()` 函数在内存中解析 `due_date` 字符串（用 `datetime.strptime(due_date, config[\"date_format\"])`），仅用于查询过",
+      "timestamp": 1780075600.0,
+      "access_count": 3,
+      "task_tag": "core"
+    },
+    {
+      "memory_id": "rm0022",
+      "node_id": "M3",
+      "text": "字段名：核心逻辑模块中所有待办项操作（增删改查）均基于 `dict` 类型对象，严格遵循 M2 存储模块定义的 schema：必含 `\"id\"`（int）、`\"text\"`（str）、`\"done\"`（bool）、`\"created_at\"`（ISO 8601 UTC 字符串），不添加、不省略、不修改字段名",
+      "timestamp": 1780079200.0,
+      "access_count": 4,
+      "task_tag": "core"
+    },
+    {
+      "memory_id": "rm0023",
+      "node_id": "M3",
+      "text": "函数签名：在 `core.py` 中实现 `save_todos(todos: list[dict]) -> None`，该函数仅调用 `storage.save_todos(todos)`（即委托给存储模块），不涉及文件路径构造、JSON 序列化或目录创建逻辑",
+      "timestamp": 1780082800.0,
+      "access_count": 5,
+      "task_tag": "core"
+    },
+    {
+      "memory_id": "rm0024",
+      "node_id": "M3",
+      "text": "文件布局：`core.py` 位于项目根目录下的 `src/todo_cli/core/` 子包中，与 `storage.py`（位于 `src/todo_cli/storage/`）和 `config.py`（位于 `src/todo_cli/config/`）同级隔离，无跨包硬编码路径引用",
+      "timestamp": 1780086400.0,
+      "access_count": 0,
+      "task_tag": "core"
+    },
+    {
+      "memory_id": "rm0025",
+      "node_id": "M6",
+      "text": "在 `logging_config.py` 中定义 `setup_logger()` 函数，初始化 `logging.getLogger(\"todo\")` 并设置日志级别为 `DEBUG`（开发时）或 `INFO`（生产时，由 `config[\"log_level\"]` 控制，默认 `\"INFO\"`）",
+      "timestamp": 1780090000.0,
+      "access_count": 1,
+      "task_tag": "exlog"
+    },
+    {
+      "memory_id": "rm0026",
+      "node_id": "M6",
+      "text": "所有异常继承自自定义基类 `TodoCLIError`（定义在 `exceptions.py`），且 `TodoCLIError` 显式继承 `Exception`（不继承 `RuntimeError` 或 `ValueError`）",
+      "timestamp": 1780093600.0,
+      "access_count": 2,
+      "task_tag": "exlog"
+    },
+    {
+      "memory_id": "rm0027",
+      "node_id": "M6",
+      "text": "日志格式强制使用 `%(asctime)s | %(name)s | %(levelname)-8s | %(funcName)s:%(lineno)d | %(message)s`，通过 `logging.basicConfig()` 在 `main.py` 入口处调用 `setup_logger()` 完成配置",
+      "timestamp": 1780097200.0,
+      "access_count": 3,
+      "task_tag": "exlog"
+    },
+    {
+      "memory_id": "rm0028",
+      "node_id": "M6",
+      "text": "文件布局：`logging_config.py` 与 `config.py`、`storage.py` 同级，位于项目 `src/todo_cli/`（或 `todo_cli/`）包内",
+      "timestamp": 1780100800.0,
+      "access_count": 4,
+      "task_tag": "exlog"
+    },
+    {
+      "memory_id": "rm0029",
+      "node_id": "M6",
+      "text": "该模块**不依赖** `storage.py` 或 `config.py` 的运行时逻辑，仅通过 `import todo_cli.config` 获取配置（避免循环导入）",
+      "timestamp": 1780104400.0,
+      "access_count": 5,
+      "task_tag": "exlog"
+    },
+    {
+      "memory_id": "rm0030",
+      "node_id": "M4",
+      "text": "使用 `argparse.ArgumentParser` 在 `cli.py` 中初始化主解析器，子命令通过 `add_subparsers(dest=\"command\")` 注册，确保 `args.command` 可直接映射到核心函数调用",
+      "timestamp": 1780108000.0,
+      "access_count": 0,
+      "task_tag": "cli"
+    },
+    {
+      "memory_id": "rm0031",
+      "node_id": "M4",
+      "text": "add` 子命令注册时显式声明 `--priority` 和 `--due-date` 参数（类型为 `str`），但不在 `args` 中传递给 `core.add_todo()` 的 `**kwargs`，仅用于触发 `core.list_todos()` 的动态排序权重计算和截止日期内存态标记",
+      "timestamp": 1780111600.0,
+      "access_count": 1,
+      "task_tag": "cli"
+    },
+    {
+      "memory_id": "rm0032",
+      "node_id": "M4",
+      "text": "list` 子命令的 `--sort-by` 参数仅接受枚举值 `[\"id\", \"text\", \"created_at\"]`，禁止传入 `\"priority\"` 或 `\"due_date\"`，因二者不存于 JSON 且排序由 `core.list_todos()` 内部按 `default_priority` 动态处理",
+      "timestamp": 1780115200.0,
+      "access_count": 2,
+      "task_tag": "cli"
+    },
+    {
+      "memory_id": "rm0033",
+      "node_id": "M4",
+      "text": "cli.py` 中 `main()` 函数在解析后强制校验 `args.command` 是否为 `None`，若为 `None` 则调用 `parser.print_help()` 并 `sys.exit(1)`，避免未指定子命令时静默执行或抛出 `AttributeError",
+      "timestamp": 1780118800.0,
+      "access_count": 3,
+      "task_tag": "cli"
+    },
+    {
+      "memory_id": "rm0034",
+      "node_id": "M4",
+      "text": "主解析器在 `cli.py` 中通过 `argparse.ArgumentParser(prog=\"todo\")` 初始化，`dest=\"command\"` 统一设于 `add_subparsers()` 调用中，确保所有子命令均注入 `args.command` 字符串（如 `\"add\"`, `\"list\"`）",
+      "timestamp": 1780122400.0,
+      "access_count": 4,
+      "task_tag": "cli"
+    },
+    {
+      "memory_id": "rm0035",
+      "node_id": "M4",
+      "text": "子命令解析器（如 `add_parser = subparsers.add_parser(\"add\", help=\"Add a new todo\")`）为各操作注册专属参数：`add` 含 `--title`, `--priority`, `--due`",
+      "timestamp": 1780126000.0,
+      "access_count": 5,
+      "task_tag": "cli"
+    },
+    {
+      "memory_id": "rm0036",
+      "node_id": "M4",
+      "text": "`list` 含 `--sort-by priority`（仅影响内存排序，不存入 JSON）",
+      "timestamp": 1780129600.0,
+      "access_count": 0,
+      "task_tag": "cli"
+    },
+    {
+      "memory_id": "rm0037",
+      "node_id": "M4",
+      "text": "`update` 含 `--id`, `--ti",
+      "timestamp": 1780133200.0,
+      "access_count": 1,
+      "task_tag": "cli"
+    },
+    {
+      "memory_id": "rm0038",
+      "node_id": "M4",
+      "text": "所有子命令的 `help` 文本严格区分持久化与临时行为：例如 `--priority` 的 help 为 `\"Set display priority (in-memory sort only",
+      "timestamp": 1780136800.0,
+      "access_count": 2,
+      "task_tag": "cli"
+    },
+    {
+      "memory_id": "rm0039",
+      "node_id": "M5",
+      "text": "统计报表模块从 `storage.py` 调用 `load_todos()` 获取原始待办列表，不依赖 `core.py` 的排序或优先级逻辑，因报表需基于持久化数据而非内存动态视图",
+      "timestamp": 1780140400.0,
+      "access_count": 3,
+      "task_tag": "stats"
+    },
+    {
+      "memory_id": "rm0040",
+      "node_id": "M5",
+      "text": "逾期统计仅基于 `created_at` 字段（ISO 8601 str）解析为 `datetime.datetime` 并与当前 UTC 时间比较，不使用任何未存入 JSON 的 `due_date` 字段（该字段不存在于存储 schema 中）",
+      "timestamp": 1780144000.0,
+      "access_count": 4,
+      "task_tag": "stats"
+    },
+    {
+      "memory_id": "rm0041",
+      "node_id": "M5",
+      "text": "完成率计算公式为 `len([t for t in todos if t[\"done\"]]) / len(todos)`，分母含所有待办项（含 `done=False`），结果保留小数点后两位并转为百分比字符串（如 `\"67.5%\"`）",
+      "timestamp": 1780147600.0,
+      "access_count": 5,
+      "task_tag": "stats"
+    },
+    {
+      "memory_id": "rm0042",
+      "node_id": "M5",
+      "text": "字段名：报表模块仅使用 `load_todos()` 返回的原始字典列表中的 `\"id\"`、`\"text\"`、`\"done\"`、`\"created_at\"` 四个字段，忽略任何内存中动态计算的 `priority` 或临时 `due_date`（因未持久化，JSON 中不存在）",
+      "timestamp": 1780151200.0,
+      "access_count": 0,
+      "task_tag": "stats"
+    },
+    {
+      "memory_id": "rm0043",
+      "node_id": "M5",
+      "text": "函数签名：`generate_report() -> dict[str, Any]` 定义在 `report.py` 中，内部直接调用 `from storage import load_todos`，不导入 `core.py` 或依赖其函数",
+      "timestamp": 1780154800.0,
+      "access_count": 1,
+      "task_tag": "stats"
+    },
+    {
+      "memory_id": "rm0044",
+      "node_id": "M5",
+      "text": "文件布局：`report.py` 独立于 `core.py` 和 `cli.py`，位于项目根目录下的 `src/` 子包中（即 `src/report.py`），与 `storage.py` 同级，无跨模块循环依赖",
+      "timestamp": 1780158400.0,
+      "access_count": 2,
+      "task_tag": "stats"
+    },
+    {
+      "memory_id": "rm0045",
+      "node_id": "M5",
+      "text": "数据处理逻辑：逾期统计需补全截止时间——因 `due_date` 不存于 JSON，报表模块**不计算逾期**",
+      "timestamp": 1780162000.0,
+      "access_count": 3,
+      "task_tag": "stats"
+    },
+    {
+      "memory_id": "rm0046",
+      "node_id": "M5",
+      "text": "完成率与周报仅基于 `\"done\"` 和 `\"created_at\"` 字段（后者用于按 ISO 周分组），避免引入外部时间配置或默认截止规则",
+      "timestamp": 1780165600.0,
+      "access_count": 4,
+      "task_tag": "stats"
+    }
+  ],
+  "queries": [
+    {
+      "query_id": "RQ1",
+      "cur_node": "M3",
+      "text": "新增任务时配置加载和存储 schema 字段要怎么衔接",
+      "task_tag": "core",
+      "relevant_nodes": [
+        "M1",
+        "M2"
+      ],
+      "anchors": [
+        "配置",
+        "schema",
+        "字段"
+      ],
+      "relevant_ids": [
+        "rm0000",
+        "rm0001",
+        "rm0002",
+        "rm0003",
+        "rm0004",
+        "rm0005",
+        "rm0007",
+        "rm0010",
+        "rm0013",
+        "rm0015"
+      ]
+    },
+    {
+      "query_id": "RQ2",
+      "cur_node": "M4",
+      "text": "命令行子命令的参数怎么对接增删改查接口",
+      "task_tag": "cli",
+      "relevant_nodes": [
+        "M3"
+      ],
+      "anchors": [
+        "增删改查",
+        "接口",
+        "优先级"
+      ],
+      "relevant_ids": [
+        "rm0019",
+        "rm0022"
+      ]
+    },
+    {
+      "query_id": "RQ3",
+      "cur_node": "M5",
+      "text": "完成率统计要读哪些存储字段和优先级逻辑",
+      "task_tag": "stats",
+      "relevant_nodes": [
+        "M2",
+        "M3"
+      ],
+      "anchors": [
+        "字段",
+        "优先级",
+        "完成"
+      ],
+      "relevant_ids": [
+        "rm0010",
+        "rm0019",
+        "rm0022"
+      ]
+    },
+    {
+      "query_id": "RQ4",
+      "cur_node": "M5",
+      "text": "统计报表读取存储层读写结果时要注意什么",
+      "task_tag": "stats",
+      "relevant_nodes": [
+        "M2"
+      ],
+      "anchors": [
+        "读写",
+        "JSON",
+        "存储"
+      ],
+      "relevant_ids": [
+        "rm0010",
+        "rm0012",
+        "rm0016"
+      ]
+    },
+    {
+      "query_id": "RQ5",
+      "cur_node": "M6",
+      "text": "路径解析和读写失败怎么归到异常分类",
+      "task_tag": "exlog",
+      "relevant_nodes": [
+        "M1",
+        "M2"
+      ],
+      "anchors": [
+        "路径",
+        "读写",
+        "存储"
+      ],
+      "relevant_ids": [
+        "rm0000",
+        "rm0003",
+        "rm0006",
+        "rm0009",
+        "rm0015"
+      ]
+    },
+    {
+      "query_id": "RQ6",
+      "cur_node": "M6",
+      "text": "日志格式里怎么记录配置加载的问题",
+      "task_tag": "exlog",
+      "relevant_nodes": [
+        "M1"
+      ],
+      "anchors": [
+        "配置",
+        "日志",
+        "路径"
+      ],
+      "relevant_ids": [
+        "rm0000",
+        "rm0001",
+        "rm0002",
+        "rm0003",
+        "rm0004",
+        "rm0005",
+        "rm0006",
+        "rm0007"
+      ]
+    }
+  ],
+  "meta": {
+    "scenario": "todo-cli 多模块项目",
+    "llm": "qwen-plus",
+    "n_nodes": 6,
+    "n_edges": 7,
+    "n_memories": 47,
+    "generated_at": "2026-09-07 23:30:57"
+  }
+}
