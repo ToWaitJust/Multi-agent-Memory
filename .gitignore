@@ -30,3 +30,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+.git_push_token.txt
+
+# 测试缓存
+.pytest_cache/

@@ -30,6 +30,7 @@ from srtp_memory.config import SchedulingConfig
 from srtp_memory.middleware import MemorySchedulingMiddleware
 from srtp_memory.plugins import register_all
 from srtp_memory.weights import DEFAULT_WEIGHTS
+from srtp_memory.agentscope_runtime import SchedulingRuntime, AGENTSCOPE_AVAILABLE
 
 register_all()
 
@@ -143,6 +144,7 @@ def _get_llm_client(mid: MemorySchedulingMiddleware):
 
 # ---- 单例中间件（聊天接口复用，避免每次请求重建池） ----
 _MID: MemorySchedulingMiddleware | None = None
+_RT: "SchedulingRuntime | None" = None
 
 
 def _get_mid() -> MemorySchedulingMiddleware:
@@ -173,6 +175,90 @@ def _get_mid() -> MemorySchedulingMiddleware:
             embedding=emb))
     _MID = mid
     return mid
+
+
+def _get_runtime() -> "SchedulingRuntime":
+    """懒初始化主副线运行时（与中间件共用单例）。"""
+    global _RT
+    if _RT is None:
+        _RT = SchedulingRuntime(_get_mid(), SchedulingConfig.load(ROOT / "config" / "srtp.yaml"))
+    return _RT
+
+
+def _pool_layout(mid: MemorySchedulingMiddleware) -> dict:
+    """双池 2D 语义布局（PCA 投影，坐标归一化到 [0,1]）。
+
+    常驻池：对其全部 embedding 做 SVD 取 top-2 主成分；共享池条目复用同一变换投影。
+    缺 embedding / 样本不足时退回网格布局，保证页面永远有图。
+    返回 {resident:[{id,text,tag,age_h,access,x,y}], shared:[{id,text,score,x,y}]}。
+    """
+    res = mid.resident_pool.all()
+    mats, meta = [], []
+    for m in res:
+        if getattr(m, "embedding", None) is not None:
+            mats.append(np.asarray(m.embedding, dtype=np.float32).ravel())
+            meta.append(m)
+    shared_items = mid.shared_pool.top()
+    shared_emb = {}
+    for it in shared_items:
+        rec = mid.resident_pool.get(it.get("memory_id"))
+        if rec is not None and getattr(rec, "embedding", None) is not None:
+            shared_emb[it.get("memory_id")] = np.asarray(rec.embedding, dtype=np.float32).ravel()
+
+    now = time.time()
+    resident = []
+    if len(mats) >= 2:
+        X = np.stack(mats)
+        mean = X.mean(0)
+        Xc = X - mean
+        # SVD top-2（numpy 自带，无需 sklearn）
+        _, _, Vt = np.linalg.svd(Xc, full_matrices=False)
+        comp = Vt[:2]
+        P = Xc @ comp.T
+        lo, hi = P.min(0), P.max(0)
+        rng = (hi - lo) + 1e-9
+        coords = (P - lo) / rng
+        for m, (cx, cy) in zip(meta, coords):
+            resident.append({
+                "id": m.memory_id, "text": m.text, "tag": m.task_tag or "",
+                "age_h": round((now - m.timestamp) / 3600.0, 1),
+                "access": getattr(m, "access_count", 0),
+                "x": round(float(cx), 4), "y": round(float(cy), 4),
+            })
+        # 共享池用同一 mean/comp 投影
+        shared = []
+        for it in shared_items:
+            emb = shared_emb.get(it.get("memory_id"))
+            if emb is not None:
+                pc = (emb - mean) @ comp.T
+                sx = (pc[0] - lo[0]) / rng[0]
+                sy = (pc[1] - lo[1]) / rng[1]
+            else:
+                sx = sy = 0.5
+            shared.append({
+                "id": it.get("memory_id"), "text": it.get("text", ""),
+                "score": round(float(it.get("score", 0.0)), 4),
+                "x": round(float(min(1.0, max(0.0, sx))), 4),
+                "y": round(float(min(1.0, max(0.0, sy))), 4),
+            })
+    else:
+        # 退化网格布局
+        n = max(1, len(meta))
+        cols = max(1, int(n ** 0.5))
+        for i, m in enumerate(meta):
+            resident.append({
+                "id": m.memory_id, "text": m.text, "tag": m.task_tag or "",
+                "age_h": round((now - m.timestamp) / 3600.0, 1),
+                "access": getattr(m, "access_count", 0),
+                "x": round((i % cols) / max(1, cols - 1), 4) if cols > 1 else 0.5,
+                "y": round((i // cols) / max(1, (n // cols)), 4) if (n // cols) > 0 else 0.5,
+            })
+        shared = [{
+            "id": it.get("memory_id"), "text": it.get("text", ""),
+            "score": round(float(it.get("score", 0.0)), 4),
+            "x": round((i % 3) / 3.0, 4), "y": round((i // 3) / 3.0, 4),
+        } for i, it in enumerate(shared_items)]
+    return {"resident": resident, "shared": shared}
 
 
 def _run_smoke() -> dict:
@@ -300,6 +386,32 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.split("?")[0] in ("/", "/index.html"):
             html = (ROOT / "dashboard.html").read_text(encoding="utf-8")
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+        elif self.path.split("?")[0] == "/api/pools":
+            try:
+                layout = _pool_layout(_get_mid())
+                body = json.dumps({"ok": True, "layout": layout,
+                                    "agent_mode": _get_runtime().mode},
+                                   ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as e:  # noqa: BLE001
+                self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+        elif self.path.split("?")[0] == "/api/status":
+            try:
+                rt = _get_runtime()
+                body = json.dumps({
+                    "ok": True,
+                    "agent_mode": rt.mode,
+                    "agentscope_available": AGENTSCOPE_AVAILABLE,
+                    "init_error": rt._init_error,
+                    "api": _get_mid().api_status(),
+                }, ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as e:  # noqa: BLE001
+                self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -319,12 +431,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def _handle_chat_sse(self):
-        """SSE 流式聊天：POST body={query, task_tag?} → 逐条 SSE event。
+        """SSE 流式聊天（主副线架构）：POST body={query, task_tag?, run_sub?} → 逐条 SSE event。
 
         事件顺序：
-        1. {type:"schedule", ...}      — 调度过程（检索/打分/权重/选择 trace）
-        2. {type:"answer_delta", ...} — LLM 流式回答片段（逐字）
-        3. {type:"done", ...}          — 结束信号
+        1. {type:"schedule", agent_mode, ...}  — 主线调度过程（双池召回/四维打分/权重/选择）
+        2. {type:"pools", resident, shared, recalled_ids, kept_ids} — 双池向量库布局
+        3. {type:"sublines", items:[...]}      — 副线书签（共享池注入隔离 workspace）
+        4. {type:"answer_delta", text}         — 主线 Agent 流式回答（逐字/逐段）
+        5. {type:"done", ...}                  — 结束信号
         """
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length > 0 else b"{}"
@@ -334,6 +448,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = {}
         query = (payload.get("query") or "").strip()
         task_tag = payload.get("task_tag", "")
+        run_sub = bool(payload.get("run_sub", False))
 
         # SSE 响应头
         self.send_response(200)
@@ -349,12 +464,15 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             mid = _get_mid()
+            rt = _get_runtime()
             now = time.time()
+            agent_mode = rt.mode
 
-            # ① 调度
+            # ① 主线调度
             res = mid.schedule_once(query, task_tag=task_tag or None, now=now)
             kept_texts = [m.text for m in res.kept]
             kept_ids = {m.memory_id for m in res.kept}
+            recalled_ids = [m.memory_id for m in res.candidates]
             cands = []
             for item in res.scored:
                 m, sc = item["memory"], item["score"]
@@ -366,10 +484,15 @@ class Handler(BaseHTTPRequestHandler):
                 })
             cands.sort(key=lambda c: -c["scores"]["final"])
             prior = getattr(mid.weights, "_cached_prior", None) or dict(DEFAULT_WEIGHTS)
+
+            # 主线回答（真实 LLM / AgentScope Agent；先算出完整文本，再切片流式推送）
+            main_answer = rt.main_answer(query, kept_texts)
+
             schedule_event = {
                 "type": "schedule",
                 "query": query,
                 "task_tag": task_tag,
+                "agent_mode": rt.mode,
                 "candidates": cands,
                 "kept_count": len(res.kept),
                 "discarded_count": len(res.discarded),
@@ -382,21 +505,32 @@ class Handler(BaseHTTPRequestHandler):
             }
             self._send_sse(json.dumps(schedule_event, ensure_ascii=False))
 
-            # ② 流式回答
-            llm_client = _get_llm_client(mid)
-            if llm_client:
-                ctx = "\n".join(f"- {t}" for t in kept_texts[:8]) or "（本轮无保留记忆）"
-                for delta in _answer_stream(llm_client, query, ctx):
-                    self._send_sse(json.dumps({"type": "answer_delta", "text": delta},
-                                              ensure_ascii=False))
-            else:
-                self._send_sse(json.dumps({"type": "answer_delta",
-                                           "text": "(未配置 LLM，跳过回答生成)"},
+            # ② 双池向量库布局
+            layout = _pool_layout(mid)
+            self._send_sse(json.dumps({
+                "type": "pools",
+                "resident": layout["resident"],
+                "shared": layout["shared"],
+                "recalled_ids": recalled_ids,
+                "kept_ids": list(kept_ids),
+                "max_shared": mid.config.max_shared,
+            }, ensure_ascii=False))
+
+            # ③ 副线书签（共享池注入隔离 workspace；run_sub 时运行真实副线 Agent，
+            #    reviewer 已拿到主线回答做一致性校验）
+            sub_items = rt.sub_lines(query, kept_texts, main_answer, run_sub)
+            self._send_sse(json.dumps({"type": "sublines", "items": sub_items},
+                                      ensure_ascii=False))
+
+            # ④ 主线回答流式推送（预计算文本切片）
+            for chunk in _slice_text(main_answer):
+                self._send_sse(json.dumps({"type": "answer_delta", "text": chunk},
                                           ensure_ascii=False))
 
-            # ③ 持久化 + 结束
+            # ⑤ 收尾
             mid.flush()
             self._send_sse(json.dumps({"type": "done",
+                                       "agent_mode": rt.mode,
                                        "kept_count": len(res.kept),
                                        "compression_ratio": round(res.compression_ratio, 3)},
                                       ensure_ascii=False))
@@ -404,6 +538,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_sse(json.dumps({"type": "error",
                                        "message": f"{type(e).__name__}: {e}"},
                                       ensure_ascii=False))
+
+
+def _slice_text(text: str, size: int = 4):
+    """把完整文本切成小段用于 SSE 推送（每 size 字一段，兼容中英文）。"""
+    if not text:
+        return [""]
+    out = []
+    for i in range(0, len(text), size):
+        out.append(text[i:i + size])
+    return out or [""]
 
     def log_message(self, *a):  # noqa: D401 - 静默请求日志
         pass
