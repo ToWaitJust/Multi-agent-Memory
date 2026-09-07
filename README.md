@@ -19,33 +19,74 @@
 ## 仓库结构
 
 ```
+app_dashboard.py                     # 控制台后端（stdlib http.server，端口 8787，零新依赖）
+dashboard.html                       # 控制台前端（7 阶段调度流 + 双池 PCA + 副线书签 + SSE 流式）
+main.py                              # 装配入口：加载 srtp.yaml → 构建主副线 → 跑演示/消融
+srtp_memory/                         # 核心包（headless，不依赖 UI）
+├── middleware.py                    # MemorySchedulingMiddleware（调度总入口）
+├── attention.py / weights.py        # 四维注意力打分 / 条件化混合权重（α·LLM先验 + β·可学习）
+├── resident_pool.py / shared_pool.py# 双池：常驻完整池 / 共享池（≤10 条）
+├── retriever.py / selector.py       # 5 种检索器 / 动作选择器
+├── coordinator.py / condition.py    # 协调层（持有双池）/ 条件嵌入
+├── agents.py / agentscope_runtime.py# Agent 工厂 / 真实 AgentScope 2.0.6 运行时（含工具系统）
+└── monitor/ train/ plugins/         # 埋点监控 / 权重训练 / 插件注册表
+config/                              # srtp.yaml + ablation/ 5 组消融 YAML（唯一真源）
+analysis/                            # 实验脚本：消融、指标计算、流程 trace
+tests/                               # 8 个单测模块
 docs/                                # 工程文档（核心交付物）
-├── 多智能体记忆共享调度系统工程实现文档.md   # 主工程文档 V1.3
-├── 需求清单.md
-├── 产品形态定义.md
-├── 研究推进方案.md
-├── AgentScope与ReMe学习指南.md
-├── 课题材料.md
-└── _archive_20260818/               # 已归档的冗余文档
-examples/
-└── reme_demo.py                     # ReMe 记忆框架演示
+├── 多智能体记忆共享调度系统工程实现文档.md   # 主工程文档 v2.1
+├── 需求清单.md / 产品形态定义.md / 研究推进方案.md
+├── AgentScope与ReMe学习指南.md / 权重训练集标注规范.md
+└── 课题材料.md
+examples/                            # reme_demo.py / sched_demo.py
 ```
 
-> `data/`（ReMe 运行工作区）、`logs/`（运行日志）、`dev-tools-srtp/`（本地工具链：模型权重与包缓存）均为本地生成物，不入库。
+> **目录约定**：`data/` 只放**实验数据产物**（埋点 JSONL、run_manifest、embedding 缓存、trace），
+> `logs/` 只放**运行日志**（控制台日志、ReMe 应用日志）；`dev-tools-srtp/`（本地模型权重与包缓存）、
+> `.workbuddy/`、`.env` 均为本地生成物，不入库。
 
 ## 技术栈
 
 - Python · PyTorch（轻量 MLP 权重模型，CPU 可训）
-- ReMe（记忆框架）· AgentScope（多智能体框架）
-- DashScope text-embedding-v4（1024 维向量）
+- ReMe 0.4.1.6（记忆框架）· **AgentScope 2.0.6**（多智能体框架，已真实接入并启用工具系统）
+- DashScope text-embedding-v4（1024 维向量）· DeepSeek（`deepseek-v4-flash`）
+- faiss-cpu（ANN 索引）· jieba（BM25 中文分词）
+
+## 快速开始
+
+```bash
+# 1) 安装依赖（conda 环境 srtp-memory 已具备全部依赖）
+pip install -r requirements.txt
+
+# 2) 配置密钥：.env 写 DASHSCOPE_API_KEY（embedding），DEEPSEEK_API_KEY 由 shell 注入
+cp .env.example .env
+
+# 3) 启动控制台（日志统一写 logs/）
+python app_dashboard.py > logs/dashboard.log 2>&1 &
+#    打开 http://127.0.0.1:8787/
+
+# 4) 命令行跑一次调度 / 5 组消融
+python main.py --demo
+python main.py --ablation
+```
+
+控制台能力：输入问题 → 7 阶段调度流实时推进 → 双池向量库 PCA 投影（严格区分「本轮调度」
+与「历史留存」记忆）→ 副线书签（真实 AgentScope Agent 产出）→ 主线流式回答。勾选
+「运行副线 Agent」可让两条副线真实执行；智能体还装配了 `Read/Write/Edit/Glob/Grep/Bash`
+工具，可真实读写文件与执行命令。未装 agentscope 或缺 key 时自动降级 headless，页面顶部标注。
 
 ## 文档导航
 
-- [主工程文档 V1.3](docs/多智能体记忆共享调度系统工程实现文档.md) — 需求、架构、模块设计、消融实验、埋点、验收全链路
+- [项目全景与全流程重要节点](docs/项目全景与全流程重要节点.md) — **入门首选**：项目是什么 + 一次问答背后的 13 个节点 + 上手路线图
+- [主工程文档 v2.1](docs/多智能体记忆共享调度系统工程实现文档.md) — 需求、架构、模块设计、消融实验、埋点、验收全链路
 - [需求清单](docs/需求清单.md) — FR/NFR/REQ 编号需求
 - [产品形态定义](docs/产品形态定义.md) — D1~D5 产品锚点
 - [研究推进方案](docs/研究推进方案.md) — 阶段规划
+- [AgentScope 与 ReMe 学习指南](docs/AgentScope与ReMe学习指南.md) — 框架 API 与踩坑记录
+- [权重训练集标注规范](docs/权重训练集标注规范.md) — 可学习权重训练数据标准
 
 ## 说明
 
-本项目为学术研究用途。当前状态：工程文档 V1.3（2026-08-18）。
+本项目为学术研究用途。当前状态：主工程文档 **v2.1**（2026-08-19 定稿）；控制台与真实
+AgentScope 主副线接入于 2026-08 落地，Agent 工具系统于 2026-08-27 接入，
+目录清理与日志规范于 2026-09-07 统一。

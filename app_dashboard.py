@@ -1,12 +1,20 @@
 # -*- coding: utf-8 -*-
-"""可视化冒烟测试控制台（真实 API 链路）。
+"""多智能体记忆共享调度控制台（真实 API 链路 + 真实 AgentScope 智能体）。
 
 用法:  python app_dashboard.py
 打开:  http://127.0.0.1:8787/
 
-后端: stdlib http.server（零新依赖）。POST /api/smoke 用真实 DashScope embedding +
-DeepSeek LLM 先验跑一轮调度冒烟，返回全流程 trace；前端渲染流水线可视化。
-真实密钥从 .env 读取；未配置时自动降级（D-11），界面标注 mode=fallback。
+后端: stdlib http.server（零新依赖）。POST /api/chat 用真实 DashScope embedding +
+DeepSeek LLM 先验跑一轮调度，SSE 依次推送 schedule / pools / sublines / answer_delta / done
+事件；前端渲染 7 阶段调度流、双池向量库 PCA 投影、副线书签与流式回答。
+
+智能体: 主线与两条副线由真实 AgentScope 2.0.6 Agent 驱动（见 srtp_memory/agentscope_runtime.py），
+装配 Toolkit（Read/Write/Edit/Glob/Grep/Bash）+ BYPASS 权限，可真实读写文件与执行命令；
+缺 agentscope 或缺 DEEPSEEK_API_KEY 时自动降级 headless，页面顶部标注 agent_mode。
+
+日志: 运行日志统一写 logs/ 目录（启动时重定向）：
+    python app_dashboard.py > logs/dashboard.log 2>&1 &
+真实密钥从 .env 读取（embedding 用 DASHSCOPE_API_KEY，DEEPSEEK_API_KEY 由 shell 环境注入）。
 """
 from __future__ import annotations
 

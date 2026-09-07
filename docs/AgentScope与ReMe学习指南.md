@@ -277,3 +277,80 @@ reme/
 ---
 
 **学习路径建议**：先做练习 1-4（1-2 天），读一遍第 2-4 节 + 源码，再做练习 5（把工程文档第 4 章跑成代码）。遇到任何"这里为什么这么设计"，回来看本文档第 2 节组件速览。
+
+---
+
+## 8. 2.0.6 实战补充：内置工具、权限与沙箱（2026-08-27 实测）
+
+> 本节记录把智能体**真正跑起来**（而非只读文档）时用到的能力与踩到的坑，
+> 均经本机 conda `srtp-memory` 环境（agentscope 2.0.6 + 真实 DeepSeek）实测验证。
+
+### 8.1 调用方式（最容易踩的坑）
+
+```python
+from agentscope.credential import DeepSeekCredential
+from agentscope.model import DeepSeekChatModel
+from agentscope.agent import Agent
+from agentscope.message import UserMsg, TextBlock
+import asyncio
+
+model = DeepSeekChatModel(credential=DeepSeekCredential(api_key=key), model="deepseek-v4-flash")
+agent = Agent(name="MainAgent", system_prompt="...", model=model)
+
+resp = asyncio.run(agent.reply(UserMsg(name="User", content="你好")))    # ✅ 正确
+# agent(UserMsg(...))                                                   # ❌ TypeError: 不可调用
+text = "".join(b.text for b in resp.content if isinstance(b, TextBlock))
+```
+
+- `Agent` 实例**不可**当函数调用，必须用 `asyncio.run(agent.reply(...))`（`reply` 是 async 方法）。
+- `Msg.content` 是 **ContentBlock 列表**，取文本要遍历 `TextBlock`；构造用 `UserMsg(name=..., content=str)` 最省事。
+- 工具模块名是 **`agentscope.tool`**（单数），**没有** `agentscope.toolkit` / `service` / `tools`。
+
+### 8.2 内置工具清单（开箱即用，不必自己写）
+
+| 工具 | 作用 |
+| --- | --- |
+| `Read` / `Write` / `Edit` | 文件读取 / 写入 / 修改 |
+| `Glob` / `Grep` | 文件搜索 / 内容搜索 |
+| `Bash` / `PowerShell` | 执行命令（Windows 下 Bash 走 `cmd /c`） |
+| `TaskCreate` / `TaskGet` / `TaskList` / `TaskUpdate` | 任务管理（计划—执行—跟踪） |
+
+```python
+from agentscope.tool import Toolkit, Read, Write, Edit, Bash, Glob, Grep
+toolkit = Toolkit([Read(), Write(), Edit(), Glob(), Grep(), Bash(cwd=项目根)])
+agent = Agent(name=..., system_prompt=..., model=model, toolkit=toolkit, state=state)
+```
+
+内置工具自带 `dangerous_files` / `dangerous_directories` 保护（`.env`、`.ssh`、`.git` 等默认不可写），
+即使权限放开也拦得住。ReAct 循环默认开启（`max_iters=20`），Agent 在推理中自动调用工具并继续。
+
+**实测结果**：`Write` 真实创建文件（16s：Write→Read→中文总结）、`Bash` 真实执行 `dir /b` 并正确列出文件（2.5s）。
+
+### 8.3 权限系统（PermissionMode）
+
+| 模式 | 行为 | 适用场景 |
+| --- | --- | --- |
+| `DEFAULT` | 逐项询问（无人应答会卡住） | 默认、最安全 |
+| `ACCEPT_EDITS` | 工作目录内文件读写自动放行 | 用户在场、快速迭代 |
+| `EXPLORE` | 只读，任何修改被拒 | 探索代码库 |
+| `BYPASS` | 跳过权限检查（工具自带危险保护仍生效） | **本地可信自用 / 沙箱内** |
+| `DONT_ASK` | 所有 ASK 转 **DENY** | 无人值守；**交互场景会卡死**，勿用 |
+
+```python
+from agentscope.state import AgentState          # 注意：在 agentscope.state，不在 agentscope.agent
+from agentscope.permission import PermissionContext, PermissionMode
+state = AgentState(permission_context=PermissionContext(mode=PermissionMode.BYPASS))
+```
+
+### 8.4 沙箱（workspace）
+
+`agentscope.workspace` 提供 `LocalWorkspace` / `DockerWorkspace` / `BubblewrapWorkspace` /
+`DaytonaWorkspace` / `E2BWorkspace` / `K8sWorkspace` / `OpenSandboxWorkspace`。
+本课题是**本地单机自用**（D3），用 `LocalWorkspace` + `BYPASS` 即可；需要真隔离时再挂 Docker / E2B。
+
+### 8.5 Windows 特有问题
+
+- `Bash` 在 Windows 走 `cmd /c`：`echo` / `dir` / `python --version` 正常，
+  但 `python -c "带引号的命令"` **输出为空**（cmd 引号传递坑）——改用脚本文件，或提示 Agent 少用复杂引号。
+- `Toolkit.get_tool_schemas()` 是 async，需 `await` / `asyncio.run`。
+- 工具任务经多轮 ReAct，耗时十几秒至数十秒属正常，前端需有加载态。
