@@ -1,0 +1,37 @@
+{
+  "G1": {
+    "recall": 0.5666666666666668,
+    "source_hit_rate": 1.0,
+    "multi_source_ratio": 0.4166666666666667,
+    "compression": 0.8944444444444445,
+    "n_injected": 9.5
+  },
+  "G2": {
+    "recall": 0.75,
+    "source_hit_rate": 0.6666666666666666,
+    "multi_source_ratio": 0.0,
+    "compression": 0.888888888888889,
+    "n_injected": 10.0
+  },
+  "G3": {
+    "recall": 0.5916666666666667,
+    "source_hit_rate": 1.0,
+    "multi_source_ratio": 0.38333333333333336,
+    "compression": 0.888888888888889,
+    "n_injected": 10.0
+  },
+  "G4": {
+    "recall": 0.625,
+    "source_hit_rate": 1.0,
+    "multi_source_ratio": 0.35000000000000003,
+    "compression": 0.888888888888889,
+    "n_injected": 10.0
+  },
+  "G4S": {
+    "recall": 0.7083333333333334,
+    "source_hit_rate": 0.9166666666666666,
+    "multi_source_ratio": 0.13333333333333333,
+    "compression": 0.888888888888889,
+    "n_injected": 10.0
+  }
+}

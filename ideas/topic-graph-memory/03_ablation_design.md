@@ -108,6 +108,10 @@ graph:
   quota_tau: 0.5           # softmax 温度
   quota_lambda: 0.7        # 静态 strength vs query 相关度 的融合系数（固定超参，不进消融变量链）
   min_quota: 1             # 保底配额，防止源被饿死
+  # —— 2026-09-07 POC 第一轮修订（见 poc/README.md 结论 2/结论「值得带进真实数据的信号」）——
+  # 硬配额的"填充式"与"封顶式"在 Σquota=K 且池够大时数学等价（G4≡G4C），必须改用软偏置：
+  # quota_mode: soft_bias   # 源分以加性 bonus(μ·src_score) 并入记忆总分后全局 top-K，μ∈{0.1,0.2,0.3}
+  quota_mu: 0.2            # 软偏置系数（POC 首选 0.2，真实数据上再扫）
   edge_types: [derives_from, depends_on, references, similar_to]
 ```
 
