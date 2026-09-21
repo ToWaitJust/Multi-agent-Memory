@@ -250,7 +250,8 @@ class MemorySchedulingMiddleware:
     def add_memory(self, text: str, memory_id: str | None = None,
                    task_tag: str | None = None, path: str = "memory.md",
                    timestamp: float | None = None,
-                   node_id: str | None = None) -> "MemoryCandidate":
+                   node_id: str | None = None,
+                   persist: bool = True) -> "MemoryCandidate":
         """写入一条记忆（真实场景由 ReMe auto_memory / 副线回写触发）。
 
         关键：入库即算 embedding 并 upsert 进常驻池向量索引 —— 否则 retriever.vector
@@ -259,6 +260,9 @@ class MemorySchedulingMiddleware:
 
         图架构（§2.3）：`node_id` 为生产者节点 → 写入 `owner_node` **标记**（不复制记忆），
         节点专属记忆 = 大池按该标记过滤的零拷贝视图。
+
+        `persist=False`：**批量灌库时必须传** —— 否则每次写入都全量落盘，灌库退化为
+        O(n²·d) 磁盘写。批量场景请在循环后显式调一次 `flush()`。
         """
         import time
         import uuid
@@ -273,7 +277,7 @@ class MemorySchedulingMiddleware:
             task_tag=task_tag, user_id=self.user_id, session_id=self.session_id,
             embedding=emb, owner_node=owner,
         )
-        self.resident_pool.upsert(cand)
+        self.resident_pool.upsert(cand, persist=persist)
         if self.budget is not None and not hit:
             self.budget.note_embed_miss(1)
         if self.graph is not None:

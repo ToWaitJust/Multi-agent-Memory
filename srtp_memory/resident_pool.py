@@ -44,8 +44,14 @@ class ResidentMemoryPool:
 
     # ---- 写 ----
 
-    def upsert(self, candidate: MemoryCandidate) -> None:
-        """按 memory_id 写入/更新一条记忆（含 access_count/task_tag 字段）。"""
+    def upsert(self, candidate: MemoryCandidate, persist: bool = True) -> None:
+        """按 memory_id 写入/更新一条记忆（含 access_count/task_tag 字段）。
+
+        `persist=False`：**批量灌库时使用** —— 每次 upsert 都全量落盘会让灌库退化为
+        O(n²·d) 磁盘写（n 条记忆 × 每条含 1024 维向量），实测 280 条时单 episode 就要写
+        数百 MB。批量场景请循环传 `persist=False`，最后显式调一次 `persist()`。
+        默认 `True` 保持既有单条写入语义不变。
+        """
         if not candidate.memory_id:
             candidate.memory_id = uuid.uuid4().hex
         existed = candidate.memory_id in self._records
@@ -57,7 +63,8 @@ class ResidentMemoryPool:
             self.vector_index.remove(candidate.memory_id)
         # 同步节点标记索引（图架构：owner_node → memory_id）
         self.node_index.add(candidate.memory_id, getattr(candidate, "owner_node", None))
-        self.persist()
+        if persist:
+            self.persist()
 
     def mark_access(self, memory_id: str) -> None:
         """access_count += 1（频率头 / L3 同源）。"""

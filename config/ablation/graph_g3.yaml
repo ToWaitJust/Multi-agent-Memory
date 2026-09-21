@@ -26,4 +26,11 @@ graph:
 #   实测 final 落在 0.43~0.59 → 阈值 0.6 会把全部候选判为丢弃（kept=0）。
 #   置 0.0 表示完全交给自适应规则 max(threshold, mean-0.5*std)，无魔法数字。
 #   该设置对 G2/G3/G4 同等生效，不影响组间对比；详见 docs/待审交付包_20260922.md D-015 D4。
+# 完整方法显式启用 LLM 先验（default_tier=full）。
+# 代价已实测：p90 约 1.1~1.6s，**超出 NFR-1(<1s)** —— 这是 LLM 先验的真实成本，
+# 由均衡档 B 系列证明：跳过先验（fast）可把 p90 降到 ~2ms 而效果仅损失 1.42pt。
+# 线上/演示默认档已改为 fast（见 config/srtp.yaml 与 BudgetConfig）。
+budget:
+  default_tier: full
+  adaptive: false
 graph_provenance: "由 analysis/run_graph_ablation.py 从 data/graph_dataset.jsonl 固定图结构注入"

@@ -37,7 +37,8 @@ class GraphConfig(BaseModel):
 class BudgetConfig(BaseModel):
     """成本 / 效果 / 速度三角均衡（优化方案 §5）。"""
 
-    default_tier: str = "balanced"    # full | balanced | fast
+    # 默认 fast：实测 LLM 先验用 ~1.5s 只换 1.42pt 效果，性价比极低（见实验报告 §7）
+    default_tier: str = "fast"        # full | balanced | fast
     adaptive: bool = False            # 实验/消融必须 false（锁定档位，保可复现）
     latency_budget_ms: float = 900.0  # NFR-1 是 1000，留 100ms 余量
     window: int = 20                  # 分位延迟统计窗口

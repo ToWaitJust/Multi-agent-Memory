@@ -32,4 +32,11 @@ graph:
   quota_lambda: 0.7
   quota_tau: 0.5
   min_quota: 1
+# 完整方法显式启用 LLM 先验（default_tier=full）。
+# 代价已实测：p90 约 1.1~1.6s，**超出 NFR-1(<1s)** —— 这是 LLM 先验的真实成本，
+# 由均衡档 B 系列证明：跳过先验（fast）可把 p90 降到 ~2ms 而效果仅损失 1.42pt。
+# 线上/演示默认档已改为 fast（见 config/srtp.yaml 与 BudgetConfig）。
+budget:
+  default_tier: full
+  adaptive: false
 graph_provenance: "由 analysis/run_graph_ablation.py 从 data/graph_dataset.jsonl 固定图结构注入"

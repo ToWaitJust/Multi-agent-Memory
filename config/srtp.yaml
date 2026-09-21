@@ -58,7 +58,8 @@ graph:
 
 # ---- 成本 / 效果 / 速度三角均衡（V3.0，优化方案 §5）----
 budget:
-  default_tier: balanced       # full | balanced | fast
+  default_tier: fast           # ★ 线上默认 fast：LLM 先验用 ~1.5s 只换 1.42pt，
+                               #   且会让 P90 超 NFR-1；实验时用 full 单独报告其代价
   adaptive: false              # ★ 实验/消融必须 false（锁定档位，保 NFR-6 可复现）
   latency_budget_ms: 900       # NFR-1 是 1000，留 100ms 余量
   window: 20

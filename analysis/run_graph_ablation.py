@@ -132,10 +132,13 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
 
             # (2) 灌库（每条记忆打 owner_node 标记 —— 大池 + 标记）
             #     timestamp 用数据集给定的固定基准时间 → 完全确定性（不依赖 wall-clock）
+            #     persist=False：批量灌库必须延后落盘，否则 upsert 每次都全量写盘
+            #     → O(n²·d) 磁盘写（280 条记忆 × 1024 维向量，实测单 episode 写数百 MB）。
             for m in ep["corpus"]:
                 mid.add_memory(text=m["text"], memory_id=m["memory_id"],
                                task_tag=m["task_tag"], node_id=m["owner_node"],
-                               timestamp=m.get("timestamp"))
+                               timestamp=m.get("timestamp"), persist=False)
+            mid.resident_pool.persist()      # 灌库结束，一次性落盘
 
             # (3) 调度
             mid.use_node(ep["cur_node"])

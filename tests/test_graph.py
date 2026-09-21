@@ -333,10 +333,11 @@ def test_budget_tiers_and_cache():
 def test_budget_adaptive_off_by_default():
     b = BudgetController(cfg=BudgetConfig())
     assert b.adaptive is False
+    start_tier = b.tier
     for _ in range(40):
         b.note_latency(5000.0)          # 远超预算
     assert b.maybe_adjust() is None
-    assert b.tier == "balanced", "adaptive=False 时档位不得自动变化（保复现）"
+    assert b.tier == start_tier, "adaptive=False 时档位不得自动变化（保复现）"
 
     b2 = BudgetController(cfg=BudgetConfig(adaptive=True))
     for _ in range(40):
