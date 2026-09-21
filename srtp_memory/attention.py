@@ -42,6 +42,9 @@ class MemoryCandidate:
     bm25_score: float = 0.0   # 常驻池 BM25 原始分（中性基座，D-12）
     vector_score: float = 0.0 # 常驻池向量原始分（中性基座，D-12）
     embedding: Optional[np.ndarray] = None  # 1024 维向量；缺失时 semantic 仅用 bm25（D-11）
+    # ---- 图架构新增（优化方案 §2.1；带默认值，保证旧数据 / 旧调用完全兼容）----
+    owner_node: str = "main"  # ★ 生产者节点：该记忆归哪个会话节点的"专属记忆"（大池 + 标记）
+    producer_run: str = ""    # 产出它的调度轮次 id（溯源用，可选）
 
 
 class MultiHeadAttentionMemoryScorer:

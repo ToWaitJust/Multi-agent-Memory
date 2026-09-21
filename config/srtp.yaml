@@ -34,3 +34,34 @@ fixed:
   alpha: 0.6
   beta: 0.4
   embedding_dim: 1024
+
+# ---- 图结构（V3.0，优化方案 §7.3）----
+# enabled: false → 完全走主副线路径，既有 5 组消融不受影响（默认关，可随时回退）
+graph:
+  enabled: false
+  source_mode: auto            # auto（邻域扩散）| manual（用户勾选源节点）
+  depth: 1                     # 邻域扩散深度（P1 封顶）
+  source_topk: 3               # 最多取几个源
+  quota_mode: soft_bias        # none | uniform | strength | soft_bias
+  quota_tau: 0.5               # softmax 温度
+  quota_lambda: 0.7            # 静态 strength vs 动态 relevance 融合系数（固定超参，不进消融变量链）
+  quota_mu: 0.2                # 软偏置系数（μ）
+  min_quota: 1                 # 保底配额，防源被饿死
+  edge_topk: 4                 # 建边候选 top-k（边密度第二道阀）
+  edge_types: [derives_from, depends_on, references, similar_to]
+  strength_min: 0.0            # 邻域展开的边强度下限
+  summary_refresh_n: 20        # summary 重算触发：新增记忆数
+  rel_var_threshold: 0.02      # 源相关度方差低于此值 → λ 置 1（纯静态退化保护）
+  graph_dir_template: "data/graph/{user}"
+  auto_link: true              # 建节点时自动粗识别建边
+  fallback_all: true           # 邻域内无候选时退回全池（冷启动保护）
+
+# ---- 成本 / 效果 / 速度三角均衡（V3.0，优化方案 §5）----
+budget:
+  default_tier: balanced       # full | balanced | fast
+  adaptive: false              # ★ 实验/消融必须 false（锁定档位，保 NFR-6 可复现）
+  latency_budget_ms: 900       # NFR-1 是 1000，留 100ms 余量
+  window: 20
+  llm_prior_cache: 512
+  llm_calls_per_schedule: 1    # 每次调度 LLM 调用预算（0 = 纯静态）
+  min_candidates_for_prior: 5  # 候选太少时跳过 LLM 先验（门控 few_cand）

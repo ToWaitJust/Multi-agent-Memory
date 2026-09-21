@@ -164,14 +164,39 @@ def test_user_isolation_concurrent(tmp_path):
 # ---- 6. 向量检索链路（离线，D-12 / NFR-2）----
 
 def test_vector_retriever_semantic_ranking(tmp_path):
-    """确定性占位向量下，同主题记忆余弦更高、排序在无关记忆之前。"""
-    mid = _make(tmp_path, user="u_a", sess="s1", retriever="retriever.vector")
-    _seed(mid, "m1", "多智能体记忆共享调度算法与共享池设计")
-    _seed(mid, "m2", "记忆调度中间件的接口契约与插件装配")
-    _seed(mid, "m3", "今天天气晴朗适合外出活动", ts=102.0)
+    """向量检索链路（离线，D-12 / NFR-2）：同主题余弦更高 → 排在无关记忆之前。
 
-    q = _place_vec("多智能体记忆共享调度")
-    res = mid.schedule_once("多智能体记忆共享调度", query_emb=q, task_tag="research", now=200.0)
+    ⚠️ 2026-09-22 修订（诊断发现）：本用例**此前从未真正验证过语义排序**。
+    - 原实现的占位向量是"按整串文本哈希出的随机向量"（`_placeholder_encode`），
+      **不携带任何主题信息** —— 任意两段文本的余弦≈0，同主题并不更高。
+    - 且 coordinator 过去**没有把 query_emb 传给检索器**，`retriever.vector` 退化为
+      按 `vector_score`（恒为 0）排序 = 稳定排序 = 等于写入序，于是 m1 恰好排第一而"通过"。
+    修订后：显式构造带主题结构的正交基向量，真正走语义排序路径。
+    """
+    mid = _make(tmp_path, user="u_a", sess="s1", retriever="retriever.vector")
+
+    dim = 1024
+    q = np.zeros(dim, dtype=np.float32); q[0] = 1.0
+    # m1/m2 与 query 同主轴（余弦高），m3 与主轴正交（余弦 0）
+    e1 = np.zeros(dim, dtype=np.float32); e1[1] = 1.0
+    e2 = np.zeros(dim, dtype=np.float32); e2[2] = 1.0
+    e3 = np.zeros(dim, dtype=np.float32); e3[3] = 1.0
+    v1 = 0.95 * q + 0.05 * e1
+    v2 = 0.80 * q + 0.20 * e2
+    v3 = e3
+
+    for mid_id, text, vec, ts in (
+        ("m1", "多智能体记忆共享调度算法与共享池设计", v1, 100.0),
+        ("m2", "记忆调度中间件的接口契约与插件装配", v2, 101.0),
+        ("m3", "今天天气晴朗适合外出活动", v3, 102.0),
+    ):
+        mid.resident_pool.upsert(MemoryCandidate(
+            memory_id=mid_id, text=text, path=f"d/{mid_id}.md", timestamp=ts,
+            task_tag="research", user_id=mid.user_id, session_id=mid.session_id,
+            embedding=vec.astype(np.float32)))
+
+    res = mid.schedule_once("多智能体记忆共享调度", query_emb=q,
+                            task_tag="research", now=200.0)
     ids = [c.memory_id for c in res.candidates]
     assert len(ids) == 3
     assert ids[0] in ("m1", "m2"), "同主题记忆应排最前"

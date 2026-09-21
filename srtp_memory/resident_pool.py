@@ -18,7 +18,11 @@ class ResidentMemoryPool:
     def __init__(self, user_id: str, session_id: str, path: str | Path,
                  with_vector_index: bool = True):
         """path 默认 data/reme/<user>/main/resident_pool.jsonl（per-user）。
-        with_vector_index=True：维护 faiss 向量索引（upsert 同步），供 VectorRetriever ANN 查询。"""
+        with_vector_index=True：维护 faiss 向量索引（upsert 同步），供 VectorRetriever ANN 查询。
+
+        图架构（§2.3）：本池即「大记忆池（EntityPool）」，新增 `node_index`
+        （owner_node → memory_id 倒排索引），使"节点专属记忆"= 按标记过滤的零拷贝视图。
+        """
         self.user_id = user_id
         self.session_id = session_id
         self.path = Path(path)
@@ -27,12 +31,16 @@ class ResidentMemoryPool:
         if with_vector_index:
             from .vector_index import VectorIndex
             self.vector_index = VectorIndex(dim=1024)
+        # 节点标记倒排索引（可从池重建，不落盘、不新增侧表，保持 D-10）
+        from .graph.view import NodeIndex
+        self.node_index = NodeIndex()
         self._load()
         # 加载后重建索引（持久化的 embedding 重新入索引）
         if self.vector_index is not None:
-            for r in self.all():
+            for r in self.all_records():
                 if r.embedding is not None:
                     self.vector_index.add(r.memory_id, r.embedding)
+        self.node_index.rebuild(self._records.values())
 
     # ---- 写 ----
 
@@ -47,6 +55,8 @@ class ResidentMemoryPool:
             self.vector_index.add(candidate.memory_id, candidate.embedding)
         elif self.vector_index is not None and existed:
             self.vector_index.remove(candidate.memory_id)
+        # 同步节点标记索引（图架构：owner_node → memory_id）
+        self.node_index.add(candidate.memory_id, getattr(candidate, "owner_node", None))
         self.persist()
 
     def mark_access(self, memory_id: str) -> None:
@@ -67,6 +77,28 @@ class ResidentMemoryPool:
             r for r in self._records.values()
             if r.user_id == self.user_id and r.session_id == self.session_id
         ]
+
+    def all_records(self) -> list[MemoryCandidate]:
+        """全量记录，**不做 (user_id, session_id) 过滤**（向量索引/节点索引重建用）。
+
+        与 `all()` 的区别：`all()` 仍保留原有 session 过滤语义（不改既有行为），
+        本方法仅供索引维护使用。
+        """
+        return list(self._records.values())
+
+    # ---- 图架构：节点标记视图（§2.3）----
+
+    def by_node(self, node_id: str) -> list[MemoryCandidate]:
+        """某节点**专属记忆**（按 owner_node 标记过滤，零拷贝）。"""
+        return [r for r in (self.get(i) for i in self.node_index.ids_of(node_id)) if r is not None]
+
+    def visible_from(self, node_ids, fallback_all: bool = False):
+        """返回限定到给定节点集合的**只读池代理**（交给 BaseRetriever 检索）。
+
+        `fallback_all=True`：范围内为空时退回全池（防止冷启动期召不到任何候选）。
+        """
+        from .graph.view import ScopedPool
+        return ScopedPool(self, node_ids, fallback_all=fallback_all)
 
     def size(self) -> int:
         return len(self._records)
@@ -111,6 +143,8 @@ def _candidate_to_dict(c: MemoryCandidate) -> dict:
         "session_id": c.session_id,
         "bm25_score": c.bm25_score,
         "vector_score": c.vector_score,
+        "owner_node": getattr(c, "owner_node", "main"),      # 图架构：节点标记（§2.1）
+        "producer_run": getattr(c, "producer_run", ""),
     }
     if c.embedding is not None:
         d["embedding"] = c.embedding.tolist()
@@ -135,4 +169,7 @@ def _dict_to_candidate(d: dict) -> MemoryCandidate:
         bm25_score=d.get("bm25_score", 0.0),
         vector_score=d.get("vector_score", 0.0),
         embedding=emb,
+        # 迁移策略（§7.4）：旧行缺字段 → 读入补 "main"，**不回写文件**
+        owner_node=d.get("owner_node", "main"),
+        producer_run=d.get("producer_run", ""),
     )
