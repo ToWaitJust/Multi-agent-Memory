@@ -1,0 +1,28 @@
+# graph_b4.yaml —— 均衡档 B4 · 组合实测点（默认线上档）
+# 基线 = G4 完整方案；本系列只做**单变量扫描**，再补一个组合实测点。
+retriever_impl: retriever.vector
+attention_impl: attention.full
+weight_impl:    weight.full
+selector_impl:  selector.full
+embedding_impl: embed.dashscope
+reward_impl:    reward.explicit
+conditioning_dims: [semantic, task]
+threshold: 0.0
+graph:
+  enabled: true
+  source_mode: auto
+  depth: 1
+  source_topk: 3
+  quota_mode: strength
+  quota_lambda: 0.7
+budget:
+  default_tier: balanced          # full | balanced | fast
+  adaptive: false              # 实验必须锁定档位（保 NFR-6 可复现）
+  llm_calls_per_schedule: 1
+# threshold=0.0（= 纯自适应阈值，不再加固定下界）——诊断发现：
+#   selector.full 的固定下界 0.6 在四维几何下不可达：首次调度时 frequency 恒为 0
+#   （access_count=0 → 1-exp(0)=0），time 随记忆年龄衰减，semantic 受余弦上限制约，
+#   实测 final 落在 0.43~0.59 → 阈值 0.6 会把全部候选判为丢弃（kept=0）。
+#   置 0.0 表示完全交给自适应规则 max(threshold, mean-0.5*std)，无魔法数字。
+#   该设置对 G2/G3/G4 同等生效，不影响组间对比；详见 docs/待审交付包_20260922.md D-015 D4。
+graph_provenance: "由 analysis/run_graph_ablation.py 从 data/graph_dataset.jsonl 固定图结构注入"
