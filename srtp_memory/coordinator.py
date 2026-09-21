@@ -109,9 +109,13 @@ class MemoryCoordinator:
         self.graph_cfg = graph_cfg
         self.budget = budget
         self._accepts_query_emb = _accepts_query_emb(self.retriever)
-        # 注入上限 K：优先取选择器自己的 max_shared；`selector.topk` 等桩实现没有该属性
-        # （G0/G1 会用到），回退到 10（与 config.max_shared 默认一致）。
-        self.injection_cap = int(getattr(self.selector, "max_shared", 0) or 10)
+        # 注入上限 K：优先取选择器自己的 max_shared（selector.full），
+        # 其次取 top_k（selector.topk 等固定 K 选择器），最后回退 10。
+        # 语义：K = "本轮最多注入多少条"，Stage A 的硬配额之和以它为准。
+        self.injection_cap = int(
+            getattr(self.selector, "max_shared", 0)
+            or getattr(self.selector, "top_k", 0)
+            or 10)
 
     @property
     def graph_enabled(self) -> bool:
@@ -186,16 +190,29 @@ class MemoryCoordinator:
 
         # ---------------- ② 四维打分 + 重算 final ----------------
         t0 = _now_ms()
-        for c in candidates:
-            sc = self.scorer.score(query_emb, c, now, task_tag, enabled_dims=enabled_dims)
-            total = sum(weights[d] * sc[d] for d in weights) / (sum(weights.values()) or 1.0)
-            owner = getattr(c, "owner_node", "main") or "main"
-            b = bonus.get(owner, 0.0)
-            if b:
-                total += b
-            sc["final"] = total
-            sc["src_score"] = res.src_scores.get(owner, 0.0)
-            res.scored.append({"memory": c, "score": sc, "via_source": owner})
+        if hasattr(self.scorer, "score_batch"):
+            # 批级打分器（如 attention.normalized）：final 在批内融合阶段已算好
+            # （门控无区分度维 + 权重重分配 + 批内归一化），此处只需叠加源软偏置。
+            batch = self.scorer.score_batch(query_emb, candidates, now, task_tag,
+                                            weights, enabled_dims=enabled_dims)
+            for c, sc in zip(candidates, batch):
+                owner = getattr(c, "owner_node", "main") or "main"
+                b = bonus.get(owner, 0.0)
+                if b:
+                    sc["final"] = sc["final"] + b
+                sc["src_score"] = res.src_scores.get(owner, 0.0)
+                res.scored.append({"memory": c, "score": sc, "via_source": owner})
+        else:
+            for c in candidates:
+                sc = self.scorer.score(query_emb, c, now, task_tag, enabled_dims=enabled_dims)
+                total = sum(weights[d] * sc[d] for d in weights) / (sum(weights.values()) or 1.0)
+                owner = getattr(c, "owner_node", "main") or "main"
+                b = bonus.get(owner, 0.0)
+                if b:
+                    total += b
+                sc["final"] = total
+                sc["src_score"] = res.src_scores.get(owner, 0.0)
+                res.scored.append({"memory": c, "score": sc, "via_source": owner})
         res.latency_ms["scoring"] = _now_ms() - t0
 
         # ---------------- ④ 动作选择 ----------------

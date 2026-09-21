@@ -1,11 +1,17 @@
+# 归因修正（D-023）：五组统一 selector.topk + 固定 K=8。
+#   原因：原设计里 G0/G1 用 selector.topk、G2-G4 用 selector.full（自适应阈值），
+#   kept 条数本身成了主导变量（实测 G1 kept=4.38 vs G4 kept=3.81），
+#   与'排序质量'混在一起无法归因。固定 K 后 recall 只反映'8 条里命中多少相关'。
 # graph_g3.yaml —— G3 · 多源 + 四维打分 + 均匀配额（剥离边强度配额这一层）
 retriever_impl: retriever.vector
 attention_impl: attention.full
 weight_impl:    weight.full
-selector_impl:  selector.full
+selector_impl:  selector.topk
 embedding_impl: embed.dashscope
+model_impl:     model.dashscope   # LLM 先验后端（无 DEEPSEEK_API_KEY，改用 qwen-plus）
 reward_impl:    reward.explicit
 conditioning_dims: [semantic, task]
+top_k: 8                              # 归因修正：五组统一固定 K
 threshold: 0.0
 graph:
   enabled: true

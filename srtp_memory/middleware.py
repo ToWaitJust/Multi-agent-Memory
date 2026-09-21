@@ -88,6 +88,14 @@ class MemorySchedulingMiddleware:
             self.weights = get_plugin(self.config.weight_impl)
 
         self.attention = get_plugin(self.config.attention_impl)
+        # attention.normalized 需要语义保底权重（S0 修复参数，由图消融 YAML 指定）
+        if self.config.attention_impl == "attention.normalized":
+            try:
+                self.attention = get_plugin(
+                    self.config.attention_impl,
+                    semantic_floor=self.config.attention_semantic_floor)
+            except TypeError:  # 插件不接受该参数时保留默认构造
+                pass
         if self.config.selector_impl == "selector.full":
             self.selector = get_plugin(self.config.selector_impl,
                                        threshold=self.config.threshold,

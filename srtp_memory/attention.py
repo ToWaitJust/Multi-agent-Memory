@@ -107,3 +107,125 @@ class MultiHeadAttentionMemoryScorer:
         if task_tag is None or memory.task_tag is None:
             return 0.5
         return 1.0 if memory.task_tag == task_tag else 0.3
+
+
+# ======================================================================
+# S0 修复：批级去偏 + 无效维门控 + 语义保底（新增，不改上面既有打分器）
+# ======================================================================
+
+class NormalizedAttentionScorer(MultiHeadAttentionMemoryScorer):
+    """批级归一化的四维注意力打分器（插件名 `attention.normalized`）。
+
+    **动机（真实数据上的实测诊断）**：逐条四维打分后直接加权融合，会出现三类系统性退化：
+
+    1. **无效维浪费权重**：`frequency = 1-exp(-0.1·access_count)`，首轮调度时
+       `access_count ≡ 0` → 该维恒为 0，权重被完全浪费（默认 0.15）。
+    2. **常数维退化为偏置**：`task` 在同一任务标签下恒为 1.0（或双方空时恒 0.5）
+       → 该项对**排序**零贡献，却占用 0.25 权重。
+    3. **量纲/偏置不可比**：`time = exp(-0.01·t_h)` 反映的是记忆的**绝对年龄**
+       （跨模块差异可达 0.43~1.0），与"该不该被召回"无直接关系；而 `semantic` 受余弦
+       上下界约束，动态范围小。等权混合会让**非相关性信号稀释语义排序**。
+
+    实测后果：G3/G4（四维融合）的候选排序反而不如 G0/G1（不做融合、直接用检索器语义序），
+    `G4 − G1 = −1.92%`。本类即针对该缺陷的修复。
+
+    **修复四步**（全部在**批内**完成，不改变单条 `score()` 的语义）：
+      A. 逐维求批内标准差，`std < std_eps` 的维判为"无区分度" → 权重置 0（门控）；
+      B. 存活维按原权重比例**再分配**回收的权重；
+      C. 语义维设**保底权重** `semantic_floor`（候选筛选任务中语义是主导信号）；
+      D. 存活维做批内 **min-max 归一化**，消除量纲差异后再加权融合。
+
+    ⚠️ 本类是**新增**实现，`attention.full` 原样保留作为对照 —— 这样"修复是否有效"
+    本身就可消融（`G4` 用 full vs `G4_norm` 用 normalized）。
+    """
+
+    def __init__(self, weights: Optional[dict[str, float]] = None,
+                 semantic_floor: float = 0.5, std_eps: float = 1e-9):
+        super().__init__(weights)
+        self.semantic_floor = float(max(0.0, min(1.0, semantic_floor)))
+        self.std_eps = float(std_eps)
+
+    # ------------------------------------------------------------------
+
+    def score_batch(self, query_emb, memories: list[MemoryCandidate],
+                    current_time: float, task_tag: Optional[str],
+                    weights: Optional[dict[str, float]] = None,
+                    enabled_dims: Optional[set[str]] = None) -> list[dict[str, float]]:
+        """批级打分：返回与 `memories` 等长的 [{final, time, semantic, frequency, task, ...}]。
+
+        额外附带 `_gated`（哪些维被判无效）与 `_eff_w`（实际生效权重）便于埋点与诊断。
+        """
+        w = dict(weights or self.weights)
+        dims = set(enabled_dims) if enabled_dims else set(ALL_DIMS)
+
+        # A0. 逐条取四维原始分（复用单条 score，保持公式唯一真源）
+        raw: list[dict[str, float]] = []
+        for m in memories:
+            raw.append(self.score(query_emb, m, current_time, task_tag,
+                                  enabled_dims=enabled_dims))
+        if not raw:
+            return []
+
+        # A. 逐维门控
+        alive: dict[str, bool] = {}
+        spread: dict[str, float] = {}
+        for d in ALL_DIMS:
+            if d not in dims:
+                alive[d], spread[d] = False, 0.0
+                continue
+            vals = [r[d] for r in raw]
+            sd = _std(vals)
+            spread[d] = sd
+            alive[d] = sd > self.std_eps
+
+        # B. 权重再分配（+ C. 语义保底）
+        eff = {d: (float(w.get(d, 0.0)) if alive[d] else 0.0) for d in ALL_DIMS}
+        tot = sum(eff.values())
+        if tot <= 0.0:
+            # 全部维无区分度（例如候选全同、或全部 dims 被掩码关掉）
+            # → 退化为存活维等权；若一个存活维都没有，则均匀兜底（避免除零）
+            survivors = [d for d in ALL_DIMS if alive[d]] or list(ALL_DIMS)
+            eff = {d: (1.0 / len(survivors) if d in survivors else 0.0) for d in ALL_DIMS}
+            tot = sum(eff.values())
+        eff = {d: v / tot for d, v in eff.items()}
+
+        if eff.get("semantic", 0.0) > 0 and self.semantic_floor > 0:
+            cur = eff["semantic"]
+            if cur < self.semantic_floor:
+                need = self.semantic_floor - cur
+                others = [d for d in ALL_DIMS if d != "semantic" and eff[d] > 0]
+                other_sum = sum(eff[d] for d in others)
+                if other_sum > 0:
+                    for d in others:
+                        eff[d] = max(0.0, eff[d] - need * eff[d] / other_sum)
+                    eff["semantic"] = self.semantic_floor
+
+        # D. 存活维批内 min-max 归一化 + 融合
+        ranges = {d: (min(x[d] for x in raw), max(x[d] for x in raw)) for d in ALL_DIMS}
+        out: list[dict[str, float]] = []
+        for r in raw:
+            s: dict[str, float] = {}
+            for d in ALL_DIMS:
+                if not alive[d]:
+                    s[d] = r[d]                      # 保留原值（埋点/诊断用）
+                    continue
+                lo, hi = ranges[d]
+                s[d] = (r[d] - lo) / (hi - lo) if hi > lo else 0.0
+            s["final"] = sum(eff[d] * s[d] for d in ALL_DIMS)
+            s["_gated"] = {d: (not alive[d]) for d in ALL_DIMS}
+            s["_spread"] = {d: round(spread[d], 6) for d in ALL_DIMS}
+            s["_eff_w"] = {d: round(eff[d], 4) for d in ALL_DIMS}
+            out.append(s)
+        return out
+
+    def names(self) -> list[str]:
+        return list(ALL_DIMS)
+
+
+def _std(xs: list[float]) -> float:
+    """批内标准差（n<2 视为 0，即"无法判断区分度"→ 门控掉）。"""
+    n = len(xs)
+    if n < 2:
+        return 0.0
+    m = sum(xs) / n
+    return float((sum((x - m) ** 2 for x in xs) / (n - 1)) ** 0.5)

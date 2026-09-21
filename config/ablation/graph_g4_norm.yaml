@@ -1,0 +1,35 @@
+# 归因修正（D-023）：五组统一 selector.topk + 固定 K=8。
+#   原因：原设计里 G0/G1 用 selector.topk、G2-G4 用 selector.full（自适应阈值），
+#   kept 条数本身成了主导变量（实测 G1 kept=4.38 vs G4 kept=3.81），
+#   与'排序质量'混在一起无法归因。固定 K 后 recall 只反映'8 条里命中多少相关'。
+# graph_g4_norm.yaml —— G4 修复验证组（唯一差异：attention.full -> attention.normalized）
+#
+# 背景（S0 诊断）：真实数据上逐条四维融合出现三类退化 ——
+#   ① frequency ≡ 0（首轮 access_count=0）→ 权重被浪费；
+#   ② task ≡ 常数（同任务标签恒 1.0）→ 对排序零贡献却占 0.25 权重；
+#   ③ time 是"模块绝对年龄"、与相关性无关，语义只剩 ~31% 权重。
+# 结果 G4 − G1 = −1.92%（四维融合反而稀释了检索器的语义排序）。
+#
+# attention.normalized 做四件事：门控无区分度维 → 权重再分配 → 语义保底 → 批内 min-max。
+# 本组与 graph_g4 只差这一项，用于验证"修复是否把 G4 拉回 G1 之上"。
+retriever_impl: retriever.vector
+attention_impl: attention.normalized   # ★ 与 graph_g4 的唯一差异
+weight_impl:    weight.full
+selector_impl:  selector.topk
+embedding_impl: embed.dashscope
+reward_impl:    reward.explicit
+conditioning_dims: [semantic, task]
+top_k: 8                              # 归因修正：五组统一固定 K
+model_impl:     model.dashscope        # LLM 先验后端（无 DEEPSEEK_API_KEY，改用 qwen-plus）
+attention_semantic_floor: 0.5          # 语义维保底权重（0.0 = 纯门控；可 --semantic-floor 覆盖）
+threshold: 0.0
+graph:
+  enabled: true
+  source_mode: auto
+  depth: 1
+  source_topk: 3
+  quota_mode: strength
+  quota_lambda: 0.7
+  quota_tau: 0.5
+  min_quota: 1
+graph_provenance: "由 analysis/run_graph_ablation.py 从 data/graph_dataset.jsonl 固定图结构注入"

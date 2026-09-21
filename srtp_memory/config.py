@@ -95,6 +95,10 @@ class SchedulingConfig(BaseModel):
     graph: GraphConfig = Field(default_factory=GraphConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
 
+    # ---- S0 修复：批级归一化注意力的语义保底权重（仅 attention.normalized 生效）----
+    # 取值 0.0 = 纯门控+按比例再分配；0.5 = 语义至少占一半权重。
+    attention_semantic_floor: float = 0.5
+
     @classmethod
     def load(cls, path: str | Path) -> "SchedulingConfig":
         """从 YAML 读取配置并校验；缺失字段用默认值。"""

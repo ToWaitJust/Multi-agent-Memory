@@ -88,7 +88,8 @@ def _build_pre_encoder(episodes: list[dict], cfg_path: Path, cache_dir: str, off
 
 def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
               cache_dir: str, offline: bool, injection_cap: int = 10,
-              oracle: bool = False, pre_emb: dict | None = None) -> list[dict]:
+              oracle: bool = False, pre_emb: dict | None = None,
+              semantic_floor: float | None = None) -> list[dict]:
     from srtp_memory.config import SchedulingConfig
     from srtp_memory.condition import ConditionKey
     from srtp_memory.middleware import MemorySchedulingMiddleware
@@ -100,6 +101,8 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
     cfg = SchedulingConfig.load(cfg_path)
     cfg.embedding_cache_dir = cache_dir
     cfg.max_shared = injection_cap        # 注入上限可覆盖（配额是否 binding 的敏感性探针）
+    if semantic_floor is not None:        # S0 修复参数的单变量覆盖（免新增 YAML）
+        cfg.attention_semantic_floor = float(semantic_floor)
     if not cfg.graph.enabled:
         raise ValueError(f"{cfg_path.name} 未开启 graph.enabled，不属于图消融组")
     cfg.graph.auto_link = False   # 图结构由数据集固定注入（图是常量，调度才是变量）
@@ -195,6 +198,8 @@ def main() -> None:
                     help="为 G4 额外跑一次 oracle 选源（人工指定正确源）= Q7 上界")
     ap.add_argument("--injection-cap", type=int, default=10,
                     help="注入上限 K（默认 10，与设计常量一致）；调小可探测配额是否 binding")
+    ap.add_argument("--semantic-floor", type=float, default=None,
+                    help="覆盖 attention.normalized 的语义保底权重（S0 敏感性扫描用）")
     ap.add_argument("--out", default="data/runs/graph_ablation_summary.json")
     args = ap.parse_args()
 
@@ -228,7 +233,8 @@ def main() -> None:
               f"{'offline placeholder' if offline else 'real embedding'})")
         try:
             rows = run_group(gf.stem, gf, episodes, cache_dir, offline,
-                             injection_cap=cap, pre_emb=pre_emb)
+                             injection_cap=cap, pre_emb=pre_emb,
+                             semantic_floor=args.semantic_floor)
         except Exception as e:  # noqa: BLE001 - 单组失败不中断整体
             print(f"   FAIL -> unavailable: {repr(e)[:140]}")
             summaries[gf.stem] = {"n_episodes": 0, "unavailable": True,

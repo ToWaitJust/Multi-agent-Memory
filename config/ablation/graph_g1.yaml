@@ -1,3 +1,7 @@
+# 归因修正（D-023）：五组统一 selector.topk + 固定 K=8。
+#   原因：原设计里 G0/G1 用 selector.topk、G2-G4 用 selector.full（自适应阈值），
+#   kept 条数本身成了主导变量（实测 G1 kept=4.38 vs G4 kept=3.81），
+#   与'排序质量'混在一起无法归因。固定 K 后 recall 只反映'8 条里命中多少相关'。
 # graph_g1.yaml —— G1 · 图 + 均匀调度（下界：有图结构、无调度算法 → 归因对照）
 # 五组共用的固定量：graph.enabled=true / depth=1 / retriever=vector / quota_lambda=0.7
 retriever_impl: retriever.vector
@@ -6,7 +10,7 @@ weight_impl:    weight.uniform
 selector_impl:  selector.topk
 reward_impl:    reward.none
 conditioning_dims: []
-top_k: 5
+top_k: 8
 graph:
   enabled: true
   source_mode: auto

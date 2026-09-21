@@ -5,6 +5,7 @@ attention_impl: attention.full
 weight_impl:    weight.full
 selector_impl:  selector.full
 embedding_impl: embed.dashscope
+model_impl:     model.dashscope   # LLM 先验后端（无 DEEPSEEK_API_KEY，改用 qwen-plus）
 reward_impl:    reward.explicit
 conditioning_dims: [semantic, task]
 threshold: 0.0
