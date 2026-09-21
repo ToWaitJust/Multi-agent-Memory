@@ -1,0 +1,30 @@
+# 本地 reflog 抢救记录（.git 被误删，对象库丢失；这些提交的内容仍在工作树中）
+# 恢复方式：工作树整体作为一个新提交入库（见下方说明）
+
+00000000 -> ce702b4b  commit (initial): SRTP 多智能体记忆共享调度方法研究：工程文档 V1.3 + 演示代码
+ce702b4b -> 03bffa32  commit: SRTP 记忆共享调度系统：核心实现 v2.1 + 插件式架构落地
+03bffa32 -> e8dc8e83  commit: feat: 接入真实 embedding/LLM 后端 + 中间件真装配 + 集成测试 + 看板
+e8dc8e83 -> 4f79dcff  commit: feat: full_ours 升级为语义向量检索器 + embedding 落盘缓存
+4f79dcff -> 92c90ecf  commit: feat: 确定性合成消融数据集生成器 + 5 组消融运行器
+92c90ecf -> 43018999  commit: feat: 全流程逐步可视化（ChatGPT 白昼风）+ 实时重跑服务
+43018999 -> 10b237e6  commit: feat: 可学习权重训练升级为 batched DataLoader + 标注规范文档
+10b237e6 -> 86a609e7  commit: chore: 项目目录清理 + 接入 AgentScope 真实工具系统
+86a609e7 -> 2e2905a4  commit: docs: 同步工程文档与真实运行时状态 + 新增项目全景与全流程节点
+2e2905a4 -> 93baa8b8  commit: ideas: 新增 topic 图记忆调度 idea 独立工作区（待验证初稿）
+93baa8b8 -> 348f3ee2  commit: ideas: topic 图 POC 第一轮——机制跑通 + 三个设计级发现
+348f3ee2 -> 7e917453  commit: ideas: POC 第二轮——真实数据验证核心主张成立（GO）
+7e917453 -> 43d91376  commit: feat: 会话画布——主副线可视化 · 一回合一节点 · 历史落盘 · 画布记忆入池
+43d91376 -> a1dcc9cf  commit: fix: 会话画布重构——副线改为独立可问答线路 + rpx 全屏适配
+a1dcc9cf -> d0e1fd78  commit: fix: 画布 1:1 像素渲染——画布铺满可平移，字体固定不随画布缩放；节点排版收紧
+d0e1fd78 -> e1bdcc31  commit: feat: 画布主线支持创建副线——记忆调度按副线第一问执行
+e1bdcc31 -> 1d13805e  commit: fix: 画布空白修复（send() 多余括号致脚本中断）+ 头部与抽屉改固定像素防放大错位
+1d13805e -> cc5d05da  commit: feat: 画布拖拽平移 + 泳道标签对齐 + UI 打磨
+cc5d05da -> 026e820e  commit: demo: 节点控制台重写 + 画布节点拖拽/跳转 + 服务器部署
+026e820e -> 84c95b7e  commit: demo: 双池视图副线继承连线（随所选副线刷新）
+00000000 -> 84c95b7e  
+84c95b7e -> 84c95b7e  reset: moving to HEAD
+84c95b7e -> 84c95b7e  checkout: moving from main to graph-topology
+84c95b7e -> 8d4403e3  commit: docs: 图架构升级基线——现状描述 + 优化方案(v1.1 含自评审修复) + 决策记录
+8d4403e3 -> 638217c5  commit: feat: 图结构架构落地——大池节点标记 + Stage A 选源 + 三角均衡控制器（G0-G4 可跑）
+638217c5 -> 45e3d083  commit: docs: 图架构首轮实验报告 + 决策记录 D-015~D-021 + 优化方案 v1.2（判据修订）
+45e3d083 -> 84c95b7e  checkout: moving from graph-topology to main

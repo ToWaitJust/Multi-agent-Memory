@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>SRTP 多智能体记忆共享调度 · 交互客户端</title>
+<title>节点控制台 · SRTP 多智能体记忆共享调度</title>
 <style>
   :root{
     --bg:#ffffff; --panel:#f7f7f8; --panel2:#fbfbfb; --border:#e5e5e5;
@@ -23,32 +23,45 @@
   .badge{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--border);background:#fff}
   .badge.agentscope{color:var(--green);border-color:#bde9dc;background:#effaf6}
   .badge.headless{color:var(--blue);border-color:#cfe0ff;background:#eef4ff}
-  .toggle{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer;user-select:none}
-  .toggle input{width:15px;height:15px;accent-color:var(--green)}
-  .archbtn{cursor:pointer;font-size:13px;color:var(--green);border:1px solid var(--border);
-    background:#fff;padding:4px 12px;border-radius:8px}
-  .archbtn:hover{background:var(--panel)}
+  .backlink{font-size:13px;font-weight:600;color:var(--green);text-decoration:none;
+    border:1px solid #bfe3d6;border-radius:10px;padding:5px 12px;background:#f0faf6}
 
-  .layout{flex:1;display:grid;grid-template-columns:minmax(340px,38%) 1fr;min-height:0}
-  .chat{display:flex;flex-direction:column;border-right:1px solid var(--border);min-height:0;background:var(--panel2)}
-  .messages{flex:1;overflow:auto;padding:18px}
-  .msg{margin-bottom:16px;max-width:100%}
-  .msg .who{font-size:12px;color:var(--muted);margin-bottom:4px}
-  .bubble{border:1px solid var(--border);border-radius:12px;padding:10px 13px;background:#fff;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+  .layout{flex:1;display:grid;grid-template-columns:minmax(360px,40%) 1fr;min-height:0}
+  /* ---- 左：节点上下文 ---- */
+  .ctx{display:flex;flex-direction:column;border-right:1px solid var(--border);min-height:0;background:var(--panel2)}
+  .sessbar{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);background:#fff;
+    overflow-x:auto;flex:0 0 auto}
+  .stab{flex:0 0 auto;font-size:12.5px;padding:5px 12px;border-radius:999px;border:1px solid var(--border);
+    background:#fff;cursor:pointer;color:var(--text);white-space:nowrap}
+  .stab.active{border-color:var(--green);background:#effaf6;color:var(--green-d);font-weight:600}
+  .stab .n{font-size:11px;color:var(--muted);margin-left:4px}
+  .messages{flex:1;overflow:auto;padding:16px 18px}
+  .ctxcap{font-size:12px;color:var(--muted);margin-bottom:12px}
+  .ctxcap b{color:var(--green-d)}
+  .msg{margin-bottom:14px;max-width:100%}
+  .msg .who{font-size:12px;color:var(--muted);margin-bottom:4px;display:flex;gap:8px;align-items:center}
+  .msg .who .rid{font-size:11px;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:0 6px}
+  .bubble{border:1px solid var(--border);border-radius:12px;padding:10px 13px;background:#fff;line-height:1.65;
+    white-space:pre-wrap;word-break:break-word}
   .msg.user .bubble{background:#f0fdf9;border-color:#cdeee3}
   .msg.assistant .bubble{background:#fff}
-  .proc{margin-top:8px;border:1px dashed var(--border);border-radius:10px;background:#fcfcfd;padding:0;overflow:hidden}
-  .proc summary{cursor:pointer;padding:7px 12px;font-size:12px;color:var(--green);font-weight:600;
-    background:#f3faf7;list-style:none}
-  .proc summary::-webkit-details-marker{display:none}
-  .proc[open] summary{border-bottom:1px dashed var(--border)}
-  .proc .body{padding:10px 12px}
+  .msg.cur .bubble{border-color:var(--green);box-shadow:0 0 0 3px rgba(16,163,127,.12)}
+  .inh{margin-top:8px;font-size:12px;border-left:3px solid #7fa8c9;background:#f2f7fc;border-radius:6px;
+    padding:6px 9px;white-space:pre-wrap;color:#3b5b7d}
   .composer{flex:0 0 auto;display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);background:#fff}
   .composer input{flex:1;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;outline:none}
   .composer input:focus{border-color:var(--green)}
   .composer button{border:none;background:var(--green);color:#fff;border-radius:10px;padding:0 18px;font-size:14px;cursor:pointer}
   .composer button:disabled{opacity:.5;cursor:not-allowed}
+  .subcreate{flex:0 0 auto;padding:0 14px 12px;background:#fff;display:none}
+  .subcreate.show{display:block}
+  .subcreate .row{display:flex;gap:8px;margin-top:6px}
+  .subcreate input{flex:1;border:1px dashed var(--green);border-radius:10px;padding:9px 12px;font-size:13px;outline:none}
+  .subcreate .go{border:none;background:var(--blue);color:#fff;border-radius:10px;padding:0 14px;font-size:13px;cursor:pointer}
+  .subcreate .cap{font-size:12px;color:var(--blue);font-weight:600}
+  .subcreate .go:disabled{opacity:.5}
 
+  /* ---- 右：调度流水线 ---- */
   .viz{display:flex;flex-direction:column;min-height:0;overflow:auto;padding:14px 16px 18px}
   .stepper{display:flex;align-items:stretch;gap:0;margin-bottom:14px;flex-wrap:wrap}
   .node{flex:1;min-width:96px;border:1px solid var(--border);border-radius:10px;padding:8px 8px;text-align:center;
@@ -66,23 +79,9 @@
   .legend{display:flex;flex-wrap:wrap;gap:10px;margin:8px 2px 0;font-size:12px;color:var(--muted)}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
 
-  .subwrap{margin-top:14px}
-  .subwrap h3{font-size:13px;margin:0 0 8px;color:var(--ink)}
-  .sublines{display:flex;flex-direction:column;gap:10px}
-  .bm{display:flex;gap:10px;border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px 12px;position:relative}
-  .bm .ribbon{width:6px;border-radius:6px;background:var(--green)}
-  .bm .main{flex:1;min-width:0}
-  .bm .role{font-weight:650;font-size:13px}
-  .bm .desc{font-size:12px;color:var(--muted);margin:2px 0 6px}
-  .bm .inj{font-size:12px;color:var(--ink)}
-  .bm .note{margin-top:6px;font-size:12.5px;background:#f3faf7;border-left:3px solid var(--green);padding:6px 9px;border-radius:6px;white-space:pre-wrap}
-  .bm .tag{font-size:11px;color:#fff;background:var(--green);padding:1px 7px;border-radius:999px;position:absolute;top:-8px;right:10px}
-
-  details.archdoc{margin:0;border-top:1px solid var(--border);background:var(--panel);padding:10px 18px}
-  details.archdoc summary{cursor:pointer;font-weight:600;color:var(--green)}
-  details.archdoc .doc{padding:10px 2px 4px;font-size:13px;line-height:1.75;color:var(--ink)}
-  details.archdoc .doc b{color:var(--green-d)}
-  .empty{color:var(--muted);font-size:13px;padding:20px;text-align:center}
+  .detail{margin-top:14px;border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px 14px}
+  .detail h3{font-size:13px;margin:0 0 8px;color:var(--ink)}
+  .empty{color:var(--muted);font-size:13px;padding:14px;text-align:center}
   table.rank{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
   table.rank th,table.rank td{border-bottom:1px solid var(--border);padding:4px 6px;text-align:left}
   table.rank th{color:var(--muted);font-weight:600}
@@ -92,44 +91,81 @@
   .wchip b{color:var(--green-d)}
   .mini{font-size:12px;color:var(--muted)}
   .kv{font-size:12px;color:var(--ink)}
-  .err{color:var(--red);font-size:13px}
-  .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--panel);border:1px solid var(--border);color:var(--muted);margin-left:6px}
+  .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--panel);
+    border:1px solid var(--border);color:var(--muted);margin-left:6px}
+
+  /* ---- 副线记忆来源卡 ---- */
+  .srccard{margin-bottom:14px;border:1px solid #cfe0ff;border-radius:12px;background:#f2f7fc;padding:10px 12px}
+  .srccard .cap{font-size:12px;font-weight:650;color:#1e3a8a;margin-bottom:6px}
+  .srcnode{display:inline-block;font-size:12.5px;color:#1d4ed8;background:#fff;border:1px solid #cfe0ff;
+    border-radius:8px;padding:4px 10px;cursor:pointer}
+  .srcnode:hover{background:#eaf1ff;border-color:#93b4f5}
+  .srcnode .arr{color:#7fa8c9;margin-right:4px}
+  .srclen{font-size:12px;color:#3b5b7d;margin:8px 0 4px}
+  .srcchips{display:flex;flex-direction:column;gap:4px}
+  .srcchips .c{font-size:12px;background:#fff;border:1px dashed #cfe0ff;border-radius:6px;
+    padding:3px 8px;color:#1f2937;white-space:pre-wrap}
+  .srcnote{font-size:12px;color:var(--muted);margin-top:4px}
+
+  /* ---- 创建副线全流程过渡动画 ---- */
+  .flowov{position:fixed;inset:0;background:rgba(248,249,250,.97);z-index:50;display:none;
+    flex-direction:column;align-items:center;justify-content:center;gap:22px}
+  .flowov.show{display:flex}
+  .flowov .cap{font-size:15px;font-weight:650;color:var(--ink)}
+  .flowsteps{display:flex;gap:14px;align-items:center}
+  .fstep{border:1px solid var(--border);background:#fff;border-radius:12px;padding:14px 18px;text-align:center;
+    max-width:220px;opacity:.22;transform:translateY(10px);transition:.4s}
+  .fstep.on{opacity:1;transform:none;border-color:var(--green);box-shadow:0 0 0 3px #d9f4ec}
+  .fstep .t{font-weight:650;font-size:13.5px;color:var(--ink)}
+  .fstep .d{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.5;word-break:break-all}
+  .fsep{color:var(--muted);font-size:18px;opacity:.3;transition:.4s}
+  .fsep.on{opacity:1;color:var(--green)}
 </style>
 </head>
 <body>
   <header class="topbar">
-    <h1>多智能体记忆共享调度 · 交互客户端</h1>
-    <span class="sub">主线全节点链路 · 双池向量库 · 主副线架构</span>
+    <a class="backlink" id="canvasLink" href="/canvas">← 会话画布</a>
+    <h1>节点控制台 · 多智能体记忆共享调度</h1>
+    <span class="sub">节点上下文历史 · 常驻池全量只读 · 调度精选 ≤10 写入共享池</span>
     <span class="spacer"></span>
     <span id="modeBadge" class="badge headless">检测中…</span>
-    <label class="toggle"><input type="checkbox" id="runsub" />运行副线 Agent</label>
-    <button class="archbtn" onclick="document.getElementById('arch').open=!document.getElementById('arch').open">双池架构说明</button>
   </header>
 
   <main class="layout">
-    <section class="chat">
-      <div class="messages" id="messages">
-        <div class="empty">在下方输入问题，系统会：调度双池记忆 → 四维打分/混合权重 → 精选≤10条写入共享池 → 主线 Agent 作答，并驱动副线书签。</div>
-      </div>
+    <!-- 左：当前节点所在会话的上下文历史 -->
+    <section class="ctx">
+      <div class="sessbar" id="sessbar"></div>
+      <div class="messages" id="messages"></div>
       <form class="composer" id="composer">
-        <input id="q" placeholder="例如：我们的项目现在用什么技术栈？" autocomplete="off" />
+        <input id="q" placeholder="在该节点所在会话继续追问（会走真实调度流水线）" autocomplete="off" />
         <button type="submit" id="send">发送</button>
       </form>
+      <div class="subcreate" id="subcreate">
+        <div class="cap">从主线 <span id="subFromRid">-</span> 创建副线（按第一问调度记忆 · 独立线路）</div>
+        <div class="row">
+          <input id="nsTitle" placeholder="副线名称（留空自动生成）" />
+        </div>
+        <div class="row">
+          <input id="nsQuery" placeholder="副线的第一问 —— 记忆调度将按它进行" />
+          <button class="go" id="nsGo">创建</button>
+        </div>
+      </div>
     </section>
 
+    <!-- 右：调度流水线可视化 -->
     <section class="viz">
       <div class="stepper" id="stepper">
-        <div class="node" data-s="input"><div class="t">用户输入</div><div class="d">查询</div></div>
-        <div class="node" data-s="recall"><div class="t">双池召回</div><div class="d">常驻池向量检索</div></div>
+        <div class="node" data-s="input"><div class="t">用户输入</div><div class="d">节点内追问</div></div>
+        <div class="node" data-s="recall"><div class="t">常驻池召回</div><div class="d">向量检索候选</div></div>
         <div class="node" data-s="score"><div class="t">四维打分</div><div class="d">时间/语义/频率/任务</div></div>
         <div class="node" data-s="weight"><div class="t">混合权重</div><div class="d">α·先验+β·学习</div></div>
         <div class="node" data-s="rank"><div class="t">排行榜</div><div class="d">final 排序</div></div>
         <div class="node" data-s="select"><div class="t">选择≤10</div><div class="d">写入共享池</div></div>
-        <div class="node" data-s="answer"><div class="t">主线 Agent</div><div class="d">基于共享池作答</div></div>
+        <div class="node" data-s="answer"><div class="t">节点 Agent</div><div class="d">基于常驻池+精选记忆作答</div></div>
       </div>
 
       <div class="poolmap">
-        <svg id="poolsvg" viewBox="0 0 1000 660" preserveAspectRatio="xMidYMid meet">
+        <svg id="poolsvg" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet">
           <defs>
             <linearGradient id="rg" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0" stop-color="#f3faf7"/><stop offset="1" stop-color="#eef6f2"/>
@@ -137,43 +173,15 @@
             <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0" stop-color="#eef4ff"/><stop offset="1" stop-color="#e8f0ff"/>
             </linearGradient>
-            <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-              <path d="M0,0 L9,4.5 L0,9 z" fill="#10a37f"/>
-            </marker>
-            <marker id="ahb" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-              <path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/>
-            </marker>
           </defs>
-          <rect x="20" y="40" width="450" height="440" rx="12" fill="url(#rg)" stroke="#d7e7e0"/>
-          <rect x="530" y="40" width="450" height="440" rx="12" fill="url(#sg)" stroke="#d7e2f5"/>
-          <text x="245" y="30" text-anchor="middle" font-size="14" fill="#0d8a6b" font-weight="700">常驻完整池 · Resident（向量库 / 主线全量只读）</text>
-          <text x="755" y="30" text-anchor="middle" font-size="14" fill="#2563eb" font-weight="700">共享池 · Shared（≤10 / 注入副线 workspace）</text>
+          <rect x="20" y="40" width="450" height="470" rx="12" fill="url(#rg)" stroke="#d7e7e0"/>
+          <rect x="530" y="40" width="450" height="470" rx="12" fill="url(#sg)" stroke="#d7e2f5"/>
+          <text x="245" y="30" text-anchor="middle" font-size="14" fill="#0d8a6b" font-weight="700">常驻完整池 · Resident（全量只读 / 主线在此作答）</text>
+          <text x="755" y="30" text-anchor="middle" font-size="14" fill="#2563eb" font-weight="700">共享池 · Shared（调度精选 ≤10 / 供副线继承）</text>
           <g id="flows"></g>
           <g id="residentDots"></g>
           <g id="sharedDots"></g>
-
-          <!-- 副线架构（主副线拓扑）：共享池经 coordinator.dispatch() 注入副线隔离 workspace；副线不触常驻池 -->
-          <g id="subNodes">
-            <line x1="640" y1="482" x2="285" y2="548" stroke="#10a37f" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#ah)"/>
-            <line x1="760" y1="482" x2="675" y2="548" stroke="#10a37f" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#ah)"/>
-            <text x="500" y="506" text-anchor="middle" font-size="11" fill="#0d8a6b">coordinator.dispatch() 注入共享池记忆（≤10）· 隔离 workspace</text>
-
-            <g id="sub1box" class="subbox">
-              <rect x="125" y="548" width="320" height="94" rx="10" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.6"/>
-              <text x="143" y="570" font-size="13" font-weight="700" fill="#b45309">检索副线 · SubAgent-sub1</text>
-              <text x="143" y="590" font-size="11" fill="#92400e">隔离 workspace：仅读共享池 ≤10 条</text>
-              <text x="143" y="608" font-size="11" fill="#92400e">不触常驻池（D3 逻辑隔离）</text>
-              <text id="sub1out" x="143" y="628" font-size="10.5" fill="#475569"></text>
-            </g>
-            <g id="revbox" class="subbox">
-              <rect x="555" y="548" width="320" height="94" rx="10" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.6"/>
-              <text x="573" y="570" font-size="13" font-weight="700" fill="#b45309">校验副线 · SubAgent-reviewer</text>
-              <text x="573" y="590" font-size="11" fill="#92400e">隔离 workspace：读共享池 + 主线回答</text>
-              <text x="573" y="608" font-size="11" fill="#92400e">做一致性校验（不触常驻池）</text>
-              <text id="revout" x="573" y="628" font-size="10.5" fill="#475569"></text>
-            </g>
-            <text x="500" y="652" text-anchor="middle" font-size="10.5" fill="#94a3b8">副线 = 调度层 dispatch 出的独立 Agent 实例；主线 Agent 吃常驻池全量 + 共享池，副线只吃共享池。</text>
-          </g>
+          <text x="500" y="545" text-anchor="middle" font-size="10.5" fill="#94a3b8">主线 Agent 读常驻池全量作答；调度层精选 ≤10 条写入共享池，副线创建时按第一问继承这批记忆。</text>
         </svg>
         <div class="legend">
           <span><i style="background:var(--profile)"></i>profile</span>
@@ -184,34 +192,48 @@
           <span><i style="background:var(--blue)"></i>● 本轮召回候选</span>
           <span><i style="background:var(--green)"></i>◆ 本轮保留(动画连线)</span>
           <span><i style="background:#fff;border:1.5px solid var(--blue)"></i>○ 历史留存</span>
-          <span style="margin-left:auto">副线框=隔离 workspace，仅读共享池</span>
+          <span><i style="background:#e6f1fb;border:1.5px dashed #378add"></i>▓ 副线继承记忆（蓝色虚线连线，随所选副线刷新）</span>
         </div>
       </div>
 
-      <div class="subwrap">
-        <h3>副线架构（书签定位式 · 隔离 workspace）</h3>
-        <div class="sublines" id="sublines"><div class="empty">发送问题后，这里显示副线书签：调度层把共享池精选记忆注入各副线隔离 workspace。</div></div>
+      <div class="detail" id="detail">
+        <div class="empty">在左侧节点会话中追问，这里展示该回合的真实调度明细（四维打分 / 混合权重 / 共享池写入）。</div>
       </div>
     </section>
   </main>
 
-  <details class="archdoc" id="arch">
-    <summary>双池架构说明（点开）</summary>
-    <div class="doc">
-      <p><b>常驻完整池（Resident Pool）</b>：每个用户的全量记忆向量库（faiss ANN 索引），是<b>主线智能体（MainAgent）的全量只读上下文</b>。所有新记忆先 upsert 进此池，召回在此池上进行。</p>
-      <p><b>共享池（Shared Pool）</b>：调度层用四维注意力 + 混合权重从常驻池<b>精选 ≤10 条高相关记忆</b>写入的向量集，是<b>副线智能体（SubAgent×N）隔离 workspace 的输入</b>。副线只看到这 ≤10 条，看不到主池全量，从而实现主副线逻辑隔离（D3）。</p>
-      <p><b>调度运作</b>：查询 → 常驻池向量召回候选 → 四维打分（时间衰减/语义相似/访问频率/任务匹配）→ 混合权重（α·LLM先验 + β·可学习权重）→ 按 final 排序 → 阈值选择 ≤10 写入共享池 → 主线 Agent 基于共享池作答；同时共享池经 <code>coordinator.dispatch()</code> 注入各副线沙箱（书签定位）。</p>
-      <p>两个池的载体都是<b>向量数据库</b>：上方左图为常驻池语义分布（PCA 2D 投影），右图为共享池精选集。视觉约定（避免误读）：<b>蓝高亮●</b>=本轮召回候选，<b>绿实心◆+动画连线</b>=本轮真正保留进共享池（连线表示「常驻池→共享池」注入流向），<b>空心蓝边○</b>=历史留存（上一轮就留在池里、本轮并未调度，不画连线）。下方两个<b>副线框</b>是与主线并列的独立 Agent 实例：共享池经 <code>coordinator.dispatch()</code> 注入其隔离 workspace（虚线箭头），副线<b>只读共享池、不触常驻池</b>（D3 逻辑隔离）。</p>
+  <!-- 创建副线：全流程过渡（主线节点 → 记忆调度 → 副线控制台就绪） -->
+  <div class="flowov" id="flowov">
+    <div class="cap" id="flowCap">正在创建副线…</div>
+    <div class="flowsteps">
+      <div class="fstep" id="fs1"><div class="t">主线源节点</div><div class="d" id="fs1d">-</div></div>
+      <div class="fsep">›</div>
+      <div class="fstep" id="fs2"><div class="t">记忆调度（按第一问）</div><div class="d" id="fs2d">-</div></div>
+      <div class="fsep">›</div>
+      <div class="fstep" id="fs3"><div class="t">副线控制台就绪</div><div class="d" id="fs3d">-</div></div>
     </div>
-  </details>
+  </div>
 
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
 const svgns = "http://www.w3.org/2000/svg";
 const TAGCOL = {profile:"#6366f1",tech_stack:"#0ea5e9",architecture:"#10b981",research:"#f59e0b",daily:"#9ca3af",
-  main_task:"#8b5cf6",attention:"#10b981",weight:"#f59e0b",reme:"#0ea5e9",embedding:"#0ea5e9",
+  project:"#8b5cf6",main_task:"#8b5cf6",attention:"#10b981",weight:"#f59e0b",reme:"#0ea5e9",embedding:"#0ea5e9",
   share:"#ef4444",retrieval:"#0ea5e9",ablation:"#f59e0b",architecture2:"#10b981"};
+
+let H = null;                       // 画布历史（会话 + 回合）
+let CUR = null;                     // {session_id, round_id}
+const params = new URLSearchParams(location.search);
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function sessionById(sid){
+  if (H.main.session_id === sid) return H.main;
+  return H.subs.find(s => s.session_id === sid);
+}
+function isMain(sid){ return H.main.session_id === sid; }
+function fmtTs(ts){const d=new Date(ts*1000);
+  return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`}
 
 function setStage(name){
   const order=["input","recall","score","weight","rank","select","answer"];
@@ -223,30 +245,104 @@ function setStage(name){
     else if(j===i) n.classList.add('active','cur');
   });
 }
+function resetStage(){ setStage('input'); }
 
-// ---- 初始：状态 + 双池布局 ----
-async function boot(){
-  try{
-    const st=await fetch('/api/status').then(r=>r.json());
-    const b=$('#modeBadge');
-    if(st.agent_mode==='agentscope'){b.textContent='AgentScope 真实 Agent';b.className='badge agentscope';}
-    else {b.textContent='Headless 中间件（真实 LLM）';b.className='badge headless';}
-  }catch(e){}
-  try{
-    const p=await fetch('/api/pools').then(r=>r.json());
-    renderPools(p.layout.resident||[], p.layout.shared||[], [], [], p.layout.max_shared||10);
-  }catch(e){}
+// ---- 左侧：会话标签 + 上下文历史 ----
+function renderTabs(){
+  const bar=$('#sessbar'); bar.innerHTML='';
+  const mk=(sid,title,n)=>{
+    const b=document.createElement('button');
+    b.className='stab'+(CUR&&CUR.session_id===sid?' active':'');
+    b.innerHTML=`${esc(title)}<span class="n">${n}轮</span>`;
+    b.onclick=()=>selectSession(sid);
+    bar.appendChild(b);
+  };
+  mk(H.main.session_id, '主线', H.main.rounds.length);
+  H.subs.forEach(s=>mk(s.session_id, s.title.replace(/^副线 · /,''), s.rounds.length));
 }
-function scaleX(zx,isShared){ return isShared? 530+zx*430 : 20+zx*450; }
-function scaleY(zy){ return 40+zy*440; }
 
-function renderPools(resident, shared, recalledIds, keptIds, maxShared){
+function selectSession(sid, rid){
+  const sess=sessionById(sid);
+  if(!sess) return;
+  CUR={session_id:sid, round_id: rid || sess.rounds[sess.rounds.length-1].round_id};
+  // 同步 URL：刷新/分享都能回到当前节点控制台
+  history.replaceState(null, '', '/?session='+encodeURIComponent(sid)+'&round='+encodeURIComponent(CUR.round_id));
+  renderTabs();
+  const main=isMain(sid);
+  const box=$('#messages'); box.innerHTML='';
+  const cap=document.createElement('div'); cap.className='ctxcap';
+  cap.innerHTML = main
+    ? `<b>主线会话</b> · 常驻完整池全量只读，追问基于调度精选记忆作答，每回合是一个画布节点。`
+    : `<b>${esc(sess.title)}</b> · 独立副线，创建时从主线 ${esc(sess.derived_from||'')} 继承了一批精选记忆。`;
+  box.appendChild(cap);
+  // 副线：记忆来源卡（源节点可点击跳回主线该回合）
+  if(!main){
+    const src=document.createElement('div'); src.className='srccard';
+    const srcRound=H.main.rounds.find(r=>r.round_id===(sess.derived_from||sess.parent));
+    const inherited=(sess.inherited && sess.inherited.length) ? sess.inherited
+      : ((sess.rounds[0]&&sess.rounds[0].inherited)||[]);
+    let html=`<div class="cap">记忆来源 · 记忆继承链路</div>
+      <span class="srcnode" onclick="selectSession('${H.main.session_id}','${esc(sess.derived_from||sess.parent||'')}')">
+        <span class="arr">↩</span>主线 ${esc(sess.derived_from||sess.parent||'?')}${srcRound? ' · '+esc(srcRound.title||''):''}</span>`;
+    if(inherited.length){
+      html+=`<div class="srclen">创建时按第一问「${esc((sess.rounds[0]&&sess.rounds[0].user)||'')}」调度继承 <b>${inherited.length}</b> 条记忆：</div>
+        <div class="srcchips">${inherited.map(t=>`<div class="c">· ${esc(t)}</div>`).join('')}</div>`;
+    }else{
+      html+=`<div class="srcnote">演示数据未附继承清单 —— 在主线选中回合现场创建副线，可看到完整的"按第一问调度 → 继承记忆"效果。</div>`;
+    }
+    src.innerHTML=html;
+    box.appendChild(src);
+  }
+  sess.rounds.forEach(r=>{
+    box.appendChild(roundCard(sess, r, r.round_id===CUR.round_id));
+  });
+  // 创建副线入口：仅主线回合
+  const sc=$('#subcreate');
+  if(main){ sc.classList.add('show'); $('#subFromRid').textContent=CUR.round_id; }
+  else sc.classList.remove('show');
+  const curEl=box.querySelector('.msg.cur');
+  if(curEl) curEl.scrollIntoView({block:'center'});
+  box.scrollTop=box.scrollHeight;
+  // 返回画布时高亮当前节点
+  $('#canvasLink').href='/canvas?hl='+encodeURIComponent(CUR.session_id+'|'+CUR.round_id);
+  // 双池视图随会话刷新：副线显示其继承记忆连线
+  updatePoolView();
+}
+
+function roundCard(sess, r, isCur){
+  const main=isMain(sess.session_id);
+  const d=document.createElement('div');
+  d.className='msg '+(main?'assistant':'assistant')+(isCur?' cur':'');
+  const who=main?'主线 Agent':'副线 Agent（基于继承/共享池记忆）';
+  const w=document.createElement('div'); w.className='who';
+  w.innerHTML=`<span class="rid">${esc(r.round_id)}</span><span>${esc(r.title||'')}</span><span>${fmtTs(r.ts)}</span>`;
+  d.appendChild(w);
+  const u=document.createElement('div'); u.className='msg user';
+  const uw=document.createElement('div'); uw.className='who'; uw.textContent='用户';
+  const ub=document.createElement('div'); ub.className='bubble'; ub.textContent=r.user;
+  u.appendChild(uw); u.appendChild(ub); d.appendChild(u);
+  const ab=document.createElement('div'); ab.className='bubble'; ab.textContent=r.assistant;
+  const aw=document.createElement('div'); aw.className='who'; aw.textContent=who;
+  d.appendChild(aw); d.appendChild(ab);
+  if(r.inherited && r.inherited.length){
+    const ih=document.createElement('div'); ih.className='inh';
+    ih.textContent='继承的记忆：\n'+r.inherited.map(t=>'· '+t).join('\n');
+    d.appendChild(ih);
+  }
+  return d;
+}
+
+// ---- 右侧：双池语义地图 ----
+function scaleX(zx,isShared){ return isShared? 530+zx*430 : 20+zx*450; }
+function scaleY(zy){ return 40+zy*450; }
+function renderPools(resident, shared, recalledIds, keptIds, maxShared, extra){
   const rg=$('#residentDots'), sg=$('#sharedDots'), fg=$('#flows');
   rg.innerHTML=''; sg.innerHTML=''; fg.innerHTML='';
   const rec=new Set(recalledIds), kep=new Set(keptIds);
-  window.__sharedCoord = {};
+  const coord={};
   resident.forEach(m=>{
     const cx=scaleX(m.x,false), cy=scaleY(m.y);
+    coord[m.id]={x:cx, y:cy};
     const recalled=rec.has(m.id), kept=kep.has(m.id);
     const c=document.createElementNS(svgns,'circle');
     c.setAttribute('cx',cx); c.setAttribute('cy',cy);
@@ -254,16 +350,37 @@ function renderPools(resident, shared, recalledIds, keptIds, maxShared){
     c.setAttribute('fill', TAGCOL[m.tag]||'#9ca3af');
     c.setAttribute('stroke', kept? '#10a37f' : '#ffffff');
     c.setAttribute('stroke-width', kept? 2.5 : 1);
-    if(recalled){ c.setAttribute('class','recalled'); }
+    if(recalled) c.setAttribute('class','recalled');
     const t=document.createElementNS(svgns,'title');
-    t.textContent=`${m.text} [${m.tag}] age=${m.age_h}h access=${m.access}`
-      + (kept? ' · 本轮保留进共享池' : (recalled? ' · 本轮召回候选' : ' · 历史未召回'));
+    t.textContent=`${m.text} [${m.tag}] age=${m.age_h}h`
+      + (kept? ' · 本轮保留进共享池' : (recalled? ' · 本轮召回候选' : ''));
     c.appendChild(t); rg.appendChild(c);
   });
-  // 共享池：按 score 排序后编号。仅「本轮保留(kept_ids)」画动画连线+绿实心；其余为历史留存(空心蓝边,无连线)
+  // 副线继承连线：常驻池 → 共享池侧虚位（蓝色虚线，随所选副线刷新）
+  (extra||[]).forEach(m=>{
+    const from=coord[m.id];
+    if(!from) return;
+    const cx=scaleX(m.x,true), cy=scaleY(m.y);
+    const ln=document.createElementNS(svgns,'line');
+    ln.setAttribute('x1',from.x); ln.setAttribute('y1',from.y);
+    ln.setAttribute('x2',cx); ln.setAttribute('y2',cy);
+    ln.setAttribute('stroke','#378add'); ln.setAttribute('stroke-width','1.7');
+    ln.setAttribute('stroke-dasharray','6 5'); ln.setAttribute('class','inheritline');
+    fg.appendChild(ln);
+    const c=document.createElementNS(svgns,'circle');
+    c.setAttribute('cx',cx); c.setAttribute('cy',cy); c.setAttribute('r',6);
+    c.setAttribute('fill','#e6f1fb'); c.setAttribute('stroke','#378add'); c.setAttribute('stroke-width','1.8');
+    c.setAttribute('class','inheritdot');
+    const t=document.createElementNS(svgns,'title');
+    t.textContent=`当前副线继承记忆：${m.text||m.id}`;
+    c.appendChild(t); sg.appendChild(c);
+    const lab=document.createElementNS(svgns,'text');
+    lab.setAttribute('x',cx+9); lab.setAttribute('y',cy+4); lab.setAttribute('font-size','11');
+    lab.setAttribute('fill','#378add'); lab.textContent='继';
+    sg.appendChild(lab);
+  });
   shared.slice().sort((a,b)=>b.score-a.score).forEach((m,idx)=>{
     const cx=scaleX(m.x,true), cy=scaleY(m.y);
-    window.__sharedCoord[m.id]={x:cx,y:cy};
     const active=kep.has(m.id);
     if(active){
       const from=resident.find(r=>r.id===m.id);
@@ -279,167 +396,160 @@ function renderPools(resident, shared, recalledIds, keptIds, maxShared){
     const c=document.createElementNS(svgns,'circle');
     c.setAttribute('cx',cx); c.setAttribute('cy',cy);
     c.setAttribute('r', active? 6.5 : 5.5);
-    if(active){
-      c.setAttribute('fill','#10a37f'); c.setAttribute('class','shareddot');
-    } else {
-      // 历史留存：空心、蓝边、无连线 —— 避免误认为本轮调度
-      c.setAttribute('fill','#ffffff'); c.setAttribute('stroke','#2563eb'); c.setAttribute('stroke-width','1.6');
-      c.setAttribute('class','sharedold');
-    }
+    if(active){ c.setAttribute('fill','#10a37f'); c.setAttribute('class','shareddot'); }
+    else{ c.setAttribute('fill','#ffffff'); c.setAttribute('stroke','#2563eb');
+      c.setAttribute('stroke-width','1.6'); c.setAttribute('class','sharedold'); }
     const t=document.createElementNS(svgns,'title');
     t.textContent=`#${idx+1} ${m.text} (score=${m.score})`
-      + (active? ' · 本轮保留进共享池' : ' · 历史留存（非本轮调度）');
+      + (active? ' · 本轮保留' : ' · 历史留存');
     c.appendChild(t); sg.appendChild(c);
     const lab=document.createElementNS(svgns,'text');
     lab.setAttribute('x',cx+9); lab.setAttribute('y',cy+4); lab.setAttribute('font-size','11');
     lab.setAttribute('fill', active? '#0d8a6b' : '#94a3b8'); lab.textContent=`#${idx+1}`;
     sg.appendChild(lab);
   });
-  // 共享池容量标注
   if(shared.length){
     const cap=document.createElementNS(svgns,'text');
-    cap.setAttribute('x',755); cap.setAttribute('y',472); cap.setAttribute('text-anchor','middle');
+    cap.setAttribute('x',755); cap.setAttribute('y',500); cap.setAttribute('text-anchor','middle');
     cap.setAttribute('font-size','11'); cap.setAttribute('fill','#2563eb');
-    cap.textContent=`已用 ${shared.length} / ${maxShared}`; sg.appendChild(cap);
+    cap.textContent=`已用 ${shared.length} / ${maxShared||10}`; sg.appendChild(cap);
   }
 }
-
-// ---- 发送与 SSE 解析 ----
-const messagesEl=$('#messages');
-function addUserMsg(q){
-  $('.empty')?.remove();
-  const d=document.createElement('div'); d.className='msg user';
-  d.innerHTML=`<div class="who">你</div><div class="bubble"></div>`;
-  d.querySelector('.bubble').textContent=q; messagesEl.appendChild(d);
-  messagesEl.scrollTop=messagesEl.scrollHeight;
-  return d;
+async function refreshPools(recalledIds, keptIds, extraIds){
+  const qs=(extraIds&&extraIds.length)? ('?ids='+encodeURIComponent(extraIds.join(','))) : '';
+  const p=await fetch('/api/pools'+qs).then(r=>r.json());
+  window.__residentCache = p.layout.resident||[];
+  renderPools(window.__residentCache, p.layout.shared||[], recalledIds||[], keptIds||[],
+    p.layout.max_shared||10, p.layout.extra||[]);
 }
-function addAssistantMsg(){
-  const d=document.createElement('div'); d.className='msg assistant';
-  d.innerHTML=`<div class="who">主线 Agent</div><div class="bubble"></div>
-    <details class="proc" open><summary>中间过程（调度与双池）</summary><div class="body"></div></details>`;
-  messagesEl.appendChild(d);
-  return {bubble:d.querySelector('.bubble'), proc:d.querySelector('.proc .body')};
-}
-
-let busy=false;
-$('#composer').addEventListener('submit', async e=>{
-  e.preventDefault();
-  if(busy) return;
-  const q=$('#q').value.trim(); if(!q) return;
-  busy=true; $('#send').disabled=true;
-  addUserMsg(q);
-  const a=addAssistantMsg();
-  setStage('input');
-  const run_sub=$('#runsub').checked;
-  try{
-    const resp=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({query:q, run_sub})});
-    const reader=resp.body.getReader(); const dec=new TextDecoder(); let buf='';
-    while(true){
-      const {value,done}=await reader.read(); if(done) break;
-      buf+=dec.decode(value,{stream:true});
-      let idx;
-      while((idx=buf.indexOf('\n\n'))>=0){
-        const block=buf.slice(0,idx); buf=buf.slice(idx+2);
-        handleBlock(block, a);
-      }
-    }
-  }catch(err){ a.bubble.textContent='[请求失败] '+err; }
-  busy=false; $('#send').disabled=false; $('#q').value=''; setStage('answer');
-  messagesEl.scrollTop=messagesEl.scrollHeight;
-});
-
-function handleBlock(block, a){
-  const line=block.split('\n').find(l=>l.startsWith('data:'));
-  if(!line) return;
-  let data; try{ data=JSON.parse(line.slice(5).trim()); }catch(e){ return; }
-  if(data.type==='schedule') onSchedule(data,a);
-  else if(data.type==='pools') onPools(data);
-  else if(data.type==='sublines') onSublines(data);
-  else if(data.type==='answer_delta'){ a.bubble.textContent+=data.text; messagesEl.scrollTop=messagesEl.scrollHeight; setStage('answer'); }
-  else if(data.type==='done'){ /* 完成 */ }
-  else if(data.type==='error'){ a.bubble.textContent='[错误] '+data.message; }
+/* 随所选会话刷新双池视图：主线=真实共享池状态；副线=其继承记忆的连线视图 */
+async function updatePoolView(){
+  if(!CUR || !H) return;
+  if(isMain(CUR.session_id)){ await refreshPools(); return; }
+  const sess=sessionById(CUR.session_id);
+  const inherited=(sess.inherited&&sess.inherited.length)? sess.inherited
+    : ((sess.rounds[0]&&sess.rounds[0].inherited)||[]);
+  const res=window.__residentCache||[];
+  const byText={}; res.forEach(m=>{ byText[m.text]=m.id; });
+  const ids=inherited.map(t=>byText[t]).filter(Boolean);
+  await refreshPools([], [], ids);
 }
 
-function onSchedule(d, a){
-  setStage('recall');
-  const modeTxt = d.agent_mode==='agentscope' ? 'AgentScope 真实 Agent' : 'Headless 中间件（真实 LLM）';
-  const w=d.final_weights||{};
-  const pw=d.llm_prior||{};
+// ---- 右侧：调度明细 ----
+function renderDetail(d){
+  const w=d.weights||{}, pw=d.llm_prior||{};
   const wchips=Object.entries(w).map(([k,v])=>`<span class="wchip">${k} <b>${(+v).toFixed(2)}</b></span>`).join('');
   const pwchips=Object.entries(pw).map(([k,v])=>`<span class="wchip">${k} <b>${(+v).toFixed(2)}</b></span>`).join('');
   const rows=(d.candidates||[]).map(c=>{
-    const s=c.scores; const kept=c.kept?'kept':'';
-    return `<tr class="${kept}"><td>${c.kept?'◆':'·'}</td><td>${esc(c.text)}</td>`+
+    const s=c.scores;
+    return `<tr class="${c.kept?'kept':''}"><td>${c.kept?'◆':'·'}</td><td>${esc(c.text)}</td>`+
       `<td>${s.time}</td><td>${s.semantic}</td><td>${s.frequency}</td><td>${s.task}</td><td><b>${s.final}</b></td></tr>`;
   }).join('');
-  const lat=d.latency_ms||{};
-  const latTxt=Object.entries(lat).map(([k,v])=>`${k} ${v}ms`).join(' · ');
-  a.proc.innerHTML=`
-    <div class="kv">查询：<b>${esc(d.query)}</b> <span class="pill">${modeTxt}</span></div>
-    <div class="kv" style="margin-top:4px">task_tag：<b>${esc(d.task_tag||'-')}</b>　保留 <b>${d.kept_count}</b> / 丢回 <b>${d.discarded_count}</b>　压缩比 <b>${d.compression_ratio}</b></div>
-    <div style="margin-top:8px" class="mini">LLM 先验权重 α·prior：</div><div class="wbar">${pwchips}</div>
-    <div class="mini">混合权重 α·prior+β·learnable：</div><div class="wbar">${wchips}</div>
+  $('#detail').innerHTML=`
+    <h3>本回合调度明细</h3>
+    <div class="kv">查询：<b>${esc(d.query||'')}</b>　保留 <b>${d.kept_count}</b> 条 → 共享池　压缩比 <b>${d.compression_ratio}</b></div>
+    <div style="margin-top:8px" class="mini">LLM 先验权重：</div><div class="wbar">${pwchips}</div>
+    <div class="mini">混合权重（α·先验 + β·可学习）：</div><div class="wbar">${wchips}</div>
     <div class="mini" style="margin-top:6px">四维打分排行榜（final 降序）：</div>
     <table class="rank"><thead><tr><th></th><th>记忆</th><th>时间</th><th>语义</th><th>频率</th><th>任务</th><th>final</th></tr></thead>
-    <tbody>${rows}</tbody></table>
-    <div class="mini" style="margin-top:6px">过程计时：${latTxt}</div>`;
-  setStage('select');
+    <tbody>${rows}</tbody></table>`;
 }
 
-function onPools(d){
-  renderPools(d.resident||[], d.shared||[], d.recalled_ids||[], d.kept_ids||[], d.max_shared||10);
-}
+// ---- 追问（真实调度） ----
+let busy=false;
+$('#composer').addEventListener('submit', async e=>{
+  e.preventDefault();
+  if(busy || !CUR) return;
+  const q=$('#q').value.trim(); if(!q) return;
+  busy=true; $('#send').disabled=true;
+  resetStage();
+  try{
+    const resp=await fetch('/api/canvas/ask',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session_id:CUR.session_id, query:q})});
+    const d=await resp.json();
+    if(!d.ok) throw new Error(d.error||'失败');
+    // 阶段动画（数据已到，快速走完流水线视觉）
+    ['recall','score','weight','rank','select'].forEach((s,i)=>setTimeout(()=>setStage(s), i*180));
+    setTimeout(()=>setStage('answer'), 180*5);
+    // 更新上下文历史（新回合长出来）
+    const sess=sessionById(CUR.session_id);
+    sess.rounds.push(d.round);
+    selectSession(CUR.session_id, d.round.round_id);
+    renderDetail(Object.assign({query:q}, d));
+    await refreshPools((d.candidates||[]).map(c=>c.id), d.kept_ids||[]);
+  }catch(err){ alert('追问失败：'+err.message); }
+  busy=false; $('#send').disabled=false; $('#q').value='';
+});
 
-function onSublines(d){
-  const el=$('#sublines'); el.innerHTML='';
-  const items=d.items||[];
-  // 副线激活：共享池（=副线读取的记忆）整体脉冲高亮
-  document.querySelectorAll('#sharedDots circle').forEach(c=>c.classList.add('subread'));
-  items.forEach(it=>{
-    const div=document.createElement('div'); div.className='bm sub';
-    const chips=(it.injected||[]).slice(0,8).map(t=>`<span class="chip">${esc(t)}</span>`).join('');
-    div.innerHTML=`<div class="ribbon sub"></div>
-      <div class="main">
-        <div class="role">${esc(it.role)} <span class="mini">(${esc(it.name)})</span></div>
-        <div class="desc">${esc(it.desc)}</div>
-        <div class="inj">隔离 workspace 注入共享池记忆 <b>${it.injected_count}</b> 条（副线仅读这些，不碰常驻池）：</div>
-        <div class="chips">${chips}</div>
-        ${it.note?`<div class="note">${esc(it.note)}</div>`:'<div class="note muted">（未运行副线 Agent：勾选顶部「运行副线 Agent」可让该副线产出侧任务结果）</div>'}
-      </div>
-      <div class="tag sub">副线</div>`;
-    el.appendChild(div);
+// ---- 创建副线（含全流程过渡动画：主线节点 → 记忆调度 → 副线控制台就绪） ----
+function showFlowTransition(fromRid, query, subTitle, keptCount){
+  const ov=$('#flowov');
+  $('#flowCap').textContent='副线创建中 · 全流程';
+  $('#fs1d').textContent=`主线 ${fromRid} · 继承源节点`;
+  $('#fs2d').textContent=`按第一问「${query.slice(0,24)}${query.length>24?'…':''}」精选 ${keptCount} 条记忆`;
+  $('#fs3d').textContent=`${subTitle}`;
+  ['fs1','fs2','fs3'].forEach(id=>$('#'+id).classList.remove('on'));
+  document.querySelectorAll('.fsep').forEach(s=>s.classList.remove('on'));
+  ov.classList.add('show');
+  return new Promise(res=>{
+    setTimeout(()=>{$('#fs1').classList.add('on'); document.querySelectorAll('.fsep')[0].classList.add('on');},350);
+    setTimeout(()=>{$('#fs2').classList.add('on'); document.querySelectorAll('.fsep')[1].classList.add('on');},1000);
+    setTimeout(()=>{$('#fs3').classList.add('on');},1650);
+    setTimeout(()=>{ov.classList.remove('show'); res();},2350);
   });
-  if(!items.length){ el.innerHTML='<div class="empty">本轮无副线。</div>'; }
-  // 在 SVG 副线框里回显运行状态
-  const sub1=items.find(i=>i.name==='sub1'), rev=items.find(i=>i.name==='reviewer');
-  $('#sub1out').textContent = sub1 ? (sub1.note? '已运行 · '+sub1.note.slice(0,20)+'…' : '待运行（勾选运行副线）') : '';
-  $('#revout').textContent = rev ? (rev.note? '已运行 · '+rev.note.slice(0,20)+'…' : '待运行（勾选运行副线）') : '';
 }
 
-function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+$('#nsGo').addEventListener('click', async ()=>{
+  if(!CUR || !isMain(CUR.session_id)) return;
+  const title=$('#nsTitle').value.trim(), query=$('#nsQuery').value.trim();
+  if(!query){ alert('请填写副线的第一问（记忆调度按它进行）'); return; }
+  const btn=$('#nsGo'); btn.disabled=true; btn.textContent='调度中…';
+  try{
+    const resp=await fetch('/api/canvas/create_sub',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({from_round:CUR.round_id, title, query})});
+    const d=await resp.json();
+    if(!d.ok) throw new Error(d.error||'创建失败');
+    H = (await (await fetch('/api/canvas/history')).json()).history;
+    $('#nsTitle').value=''; $('#nsQuery').value='';
+    btn.textContent='创建成功 · 正在进入副线';
+    await showFlowTransition(CUR.round_id, query, d.session.title, d.kept_count);
+    // 主动跳转到新副线的控制台（URL 同步更新，可刷新/分享）
+    selectSession(d.session.session_id, d.round.round_id);
+  }catch(err){ alert('创建副线失败：'+err.message); }
+  btn.disabled=false; btn.textContent='创建';
+});
 
+// ---- 启动 ----
+async function boot(){
+  try{
+    const st=await fetch('/api/status').then(r=>r.json());
+    const b=$('#modeBadge');
+    if(st.agent_mode==='agentscope'){b.textContent='AgentScope 真实 Agent';b.className='badge agentscope';}
+    else {b.textContent='真实 LLM · Headless 中间件';b.className='badge headless';}
+  }catch(e){}
+  try{
+    const p=await fetch('/api/pools').then(r=>r.json());
+    window.__maxShared=p.layout.max_shared||10;
+  }catch(e){}
+  H=(await (await fetch('/api/canvas/history')).json()).history;
+  await refreshPools();   // 先缓存常驻池（副线继承连线需要 text→id 匹配）
+  const sid=params.get('session'), rid=params.get('round');
+  if(sid && sessionById(sid)) selectSession(sid, rid);
+  else selectSession(H.main.session_id);
+}
 boot();
 </script>
 <style>
   .recalled{filter:drop-shadow(0 0 4px rgba(37,99,235,.7))}
   .shareddot{animation:pop .5s ease}
   .sharedold{opacity:.85}
-  .subread{animation:subread 1.2s ease}
-  @keyframes subread{0%{filter:drop-shadow(0 0 0 #f59e0b)}60%{filter:drop-shadow(0 0 5px #f59e0b)}100%{filter:drop-shadow(0 0 0 #f59e0b)}}
   @keyframes pop{from{transform:scale(0)}to{transform:scale(1)}}
   .flowline{animation:dash 1s linear infinite}
   @keyframes dash{to{stroke-dashoffset:-18}}
-  .subbox rect{transition:.2s}
-  .subbox.active rect{stroke-width:2.6;fill:#fff3e0}
-  /* 副线卡片区分于主线 */
-  .bm.sub .ribbon.sub{background:var(--amber)}
-  .bm.sub .tag.sub{background:var(--amber)}
-  .bm .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
-  .bm .chip{font-size:11px;background:#eef4ff;border:1px solid #cfe0ff;color:#1e3a8a;
-    padding:2px 7px;border-radius:6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .bm .note.muted{background:#f7f7f8;border-left-color:var(--border);color:var(--muted)}
+  .inheritline{animation:dash 1.2s linear infinite;filter:drop-shadow(0 0 2px rgba(55,138,221,.45))}
+  .inheritdot{animation:pop .45s ease}
 </style>
 </body>
 </html>

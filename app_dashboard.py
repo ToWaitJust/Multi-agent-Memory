@@ -19,6 +19,7 @@ DeepSeek LLM 先验跑一轮调度，SSE 依次推送 schedule / pools / subline
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,6 +39,8 @@ from srtp_memory.config import SchedulingConfig
 from srtp_memory.middleware import MemorySchedulingMiddleware
 from srtp_memory.plugins import register_all
 from srtp_memory.weights import DEFAULT_WEIGHTS
+
+import demo_canvas  # 会话画布：模拟主副线聊天历史 + 画布记忆种子（data/demo/canvas_history.json）
 from srtp_memory.agentscope_runtime import SchedulingRuntime, AGENTSCOPE_AVAILABLE
 
 register_all()
@@ -156,11 +159,15 @@ _RT: "SchedulingRuntime | None" = None
 
 
 def _get_mid() -> MemorySchedulingMiddleware:
-    """懒初始化单例中间件（首次调用种入 50 条种子记忆）。"""
+    """懒初始化单例中间件（首次调用种入种子记忆 + 画布记忆）。"""
     global _MID
     if _MID is not None:
         return _MID
     cfg = SchedulingConfig.load(ROOT / "config" / "srtp.yaml")
+    # LLM 真实接入兜底：无 DEEPSEEK key 时切 DashScope（qwen-plus），
+    # 保证 LLM 先验与回答生成都是真实调用（而不是"未配置 LLM"占位）。
+    if cfg.model_impl == "model.deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
+        cfg.model_impl = "model.dashscope"
     mid = MemorySchedulingMiddleware(
         config=cfg,
         user_id="u_tu", session_id="chat_vis",
@@ -181,6 +188,11 @@ def _get_mid() -> MemorySchedulingMiddleware:
             timestamp=now - ago, task_tag=tag,
             user_id="u_tu", session_id="chat_vis",
             embedding=emb))
+    # 种入会话画布的聊天记忆（mc_*：来自模拟主副线聊天，演示时可被真实调度召回）
+    try:
+        demo_canvas.seed_memories(mid)
+    except Exception:  # noqa: BLE001 - 画布种子失败不阻断控制台
+        pass
     _MID = mid
     return mid
 
@@ -193,12 +205,14 @@ def _get_runtime() -> "SchedulingRuntime":
     return _RT
 
 
-def _pool_layout(mid: MemorySchedulingMiddleware) -> dict:
+def _pool_layout(mid: MemorySchedulingMiddleware, extra_ids: list[str] | None = None) -> dict:
     """双池 2D 语义布局（PCA 投影，坐标归一化到 [0,1]）。
 
     常驻池：对其全部 embedding 做 SVD 取 top-2 主成分；共享池条目复用同一变换投影。
+    extra_ids：额外投影指定记忆（用于副线"继承记忆"在共享池侧的虚位，
+    连线体现常驻池 → 共享池的继承关系，随所选副线刷新）。
     缺 embedding / 样本不足时退回网格布局，保证页面永远有图。
-    返回 {resident:[{id,text,tag,age_h,access,x,y}], shared:[{id,text,score,x,y}]}。
+    返回 {resident:[...], shared:[...], extra:[{id,text,x,y}]}。
     """
     res = mid.resident_pool.all()
     mats, meta = [], []
@@ -214,6 +228,7 @@ def _pool_layout(mid: MemorySchedulingMiddleware) -> dict:
             shared_emb[it.get("memory_id")] = np.asarray(rec.embedding, dtype=np.float32).ravel()
 
     now = time.time()
+    extra: list[dict] = []  # 副线继承记忆的共享池侧虚位（仅 PCA 分支填充）
     resident = []
     if len(mats) >= 2:
         X = np.stack(mats)
@@ -249,6 +264,19 @@ def _pool_layout(mid: MemorySchedulingMiddleware) -> dict:
                 "x": round(float(min(1.0, max(0.0, sx))), 4),
                 "y": round(float(min(1.0, max(0.0, sy))), 4),
             })
+        # 额外投影（副线继承记忆虚位）：同一 PCA 变换，保证与常驻池同一定标
+        extra = []
+        for eid in (extra_ids or []):
+            rec = mid.resident_pool.get(eid)
+            if rec is None or getattr(rec, "embedding", None) is None:
+                continue
+            emb = np.asarray(rec.embedding, dtype=np.float32).ravel()
+            pc = (emb - mean) @ comp.T
+            extra.append({
+                "id": eid, "text": rec.text,
+                "x": round(float(min(1.0, max(0.0, (pc[0] - lo[0]) / rng[0]))), 4),
+                "y": round(float(min(1.0, max(0.0, (pc[1] - lo[1]) / rng[1]))), 4),
+            })
     else:
         # 退化网格布局
         n = max(1, len(meta))
@@ -265,8 +293,8 @@ def _pool_layout(mid: MemorySchedulingMiddleware) -> dict:
             "id": it.get("memory_id"), "text": it.get("text", ""),
             "score": round(float(it.get("score", 0.0)), 4),
             "x": round((i % 3) / 3.0, 4), "y": round((i // 3) / 3.0, 4),
-        } for i, it in enumerate(shared_items)]
-    return {"resident": resident, "shared": shared}
+            } for i, it in enumerate(shared_items)]
+    return {"resident": resident, "shared": shared, "extra": extra}
 
 
 def _run_smoke() -> dict:
@@ -391,12 +419,30 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def do_GET(self):  # noqa: N802
-        if self.path.split("?")[0] in ("/", "/index.html"):
+        p = self.path.split("?")[0]
+        if p in ("/", "/index.html"):
             html = (ROOT / "dashboard.html").read_text(encoding="utf-8")
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
-        elif self.path.split("?")[0] == "/api/pools":
+        elif p == "/canvas":
+            html = (ROOT / "canvas.html").read_text(encoding="utf-8")
+            self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+        elif p == "/api/canvas/history":
             try:
-                layout = _pool_layout(_get_mid())
+                history = demo_canvas.load_or_create()
+                self._send(200, json.dumps({"ok": True, "history": history},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+            except Exception as e:  # noqa: BLE001
+                self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+        elif p == "/api/pools":
+            try:
+                from urllib.parse import urlparse, parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                raw_ids = (qs.get("ids") or [""])[0]
+                extra_ids = [s.strip() for s in raw_ids.split(",") if s.strip()][:30] or None
+                layout = _pool_layout(_get_mid(), extra_ids=extra_ids)
                 body = json.dumps({"ok": True, "layout": layout,
                                     "agent_mode": _get_runtime().mode},
                                    ensure_ascii=False).encode("utf-8")
@@ -424,7 +470,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self):  # noqa: N802
-        if self.path == "/api/smoke":
+        if self.path == "/api/canvas/create_sub":
+            self._handle_canvas_create_sub()
+        elif self.path == "/api/canvas/ask":
+            self._handle_canvas_ask()
+        elif self.path == "/api/canvas/layout":
+            self._handle_canvas_layout()
+        elif self.path == "/api/smoke":
             try:
                 trace = _run_smoke()
                 self._send(200, json.dumps(trace, ensure_ascii=False).encode("utf-8"),
@@ -438,15 +490,141 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, b"not found", "text/plain")
 
+    def _handle_canvas_create_sub(self):
+        """创建副线：POST {from_round, title, query}。
+
+        记忆调度根据副线的第一个 query 进行：schedule_once(query) 从常驻池精选记忆 →
+        作为该副线从主线继承的记忆注入第一轮 → 副线成为独立可问答线路。
+        """
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = {}
+        from_round = (payload.get("from_round") or "").strip()
+        title = (payload.get("title") or "").strip()
+        query = (payload.get("query") or "").strip()
+        if not from_round or not query:
+            self._send(400, json.dumps({"ok": False, "error": "from_round 与 query 必填"},
+                                       ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+            return
+        try:
+            mid = _get_mid()
+            rt = _get_runtime()
+            now = time.time()
+            # 记忆调度：以副线第一个 query 为准
+            res = mid.schedule_once(query, task_tag=None, now=now)
+            kept_texts = [m.text for m in res.kept]
+            try:
+                answer = rt.main_answer(query, kept_texts)
+            except Exception as e:  # noqa: BLE001
+                answer = f"基于继承记忆：{'；'.join(kept_texts[:3]) or '（本轮无保留记忆）'}"[:220]
+            inherited_block = "\n".join(f"· {t}" for t in kept_texts[:6]) or "·（本轮无命中记忆）"
+            assistant = (f"副线已从主线 {from_round} 派生。根据第一问「{query}」完成记忆调度，"
+                         f"继承 {len(kept_texts)} 条记忆：\n{inherited_block}\n\n{answer}")
+            first_round = {"title": (query[:8] + "…") if len(query) > 8 else query,
+                           "ts": now, "user": query, "assistant": assistant,
+                           "inherited": kept_texts}
+            sess, rnd = demo_canvas.create_sub(
+                title or f"副线 · {query[:10]}",
+                derived_from=from_round, first_round=first_round)
+            mid.flush()
+            self._send(200, json.dumps({
+                "ok": True, "session": sess, "round": rnd,
+                "agent_mode": rt.mode, "kept_count": len(res.kept),
+                "kept_memories": kept_texts,
+                "compression_ratio": round(res.compression_ratio, 3),
+            }, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+        except Exception as e:  # noqa: BLE001
+            self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                                       ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+
+    def _handle_canvas_ask(self):
+        """画布追问：POST {session_id, query} → 调度 → 回答 → 追加为新回合并落盘。"""
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = {}
+        session_id = (payload.get("session_id") or "").strip()
+        query = (payload.get("query") or "").strip()
+        if not session_id or not query:
+            self._send(400, json.dumps({"ok": False, "error": "session_id 与 query 必填"},
+                                       ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+            return
+        try:
+            mid = _get_mid()
+            rt = _get_runtime()
+            now = time.time()
+            res = mid.schedule_once(query, task_tag=None, now=now)
+            kept_texts = [m.text for m in res.kept]
+            kept_ids = {m.memory_id for m in res.kept}
+            prior = getattr(mid.weights, "_cached_prior", None) or dict(DEFAULT_WEIGHTS)
+            candidates = []
+            for item in res.scored:
+                m, sc = item["memory"], item["score"]
+                candidates.append({
+                    "id": m.memory_id, "text": m.text,
+                    "scores": {d: round(sc[d], 3) for d in ("time", "semantic", "frequency", "task", "final")},
+                    "kept": m.memory_id in kept_ids,
+                })
+            candidates.sort(key=lambda c: -c["scores"]["final"])
+            try:
+                answer = rt.main_answer(query, kept_texts)
+            except Exception as e:  # noqa: BLE001 - 回答失败时给基于记忆的兜底文案
+                ctx = "；".join(kept_texts[:3]) or "（本轮无保留记忆）"
+                answer = f"基于共享池记忆：{ctx[:180]}"
+            rnd = demo_canvas.append_round(session_id, query, answer)
+            mid.flush()
+            layout = _pool_layout(mid)
+            self._send(200, json.dumps({
+                "ok": True, "round": rnd, "agent_mode": rt.mode,
+                "kept_count": len(res.kept),
+                "kept_memories": kept_texts,
+                "kept_ids": sorted(kept_ids),
+                "compression_ratio": round(res.compression_ratio, 3),
+                "llm_prior": {k: round(v, 3) for k, v in prior.items()},
+                "weights": {k: round(v, 3) for k, v in res.weights.items()},
+                "candidates": candidates[:20],
+                "shared": layout["shared"],
+                "max_shared": mid.config.max_shared,
+            }, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+        except Exception as e:  # noqa: BLE001
+            self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                                       ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+
+    def _handle_canvas_layout(self):
+        """节点拖拽布局落盘：POST {positions: {"session|round": {dx,dy}}}。"""
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = {}
+        try:
+            lay = demo_canvas.save_layout(payload.get("positions") or {})
+            self._send(200, json.dumps({"ok": True, "layout": lay},
+                                       ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+        except Exception as e:  # noqa: BLE001
+            self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                                       ensure_ascii=False).encode("utf-8"),
+                       "application/json; charset=utf-8")
+
     def _handle_chat_sse(self):
         """SSE 流式聊天（主副线架构）：POST body={query, task_tag?, run_sub?} → 逐条 SSE event。
 
         事件顺序：
-        1. {type:"schedule", agent_mode, ...}  — 主线调度过程（双池召回/四维打分/权重/选择）
+        1. {type:"schedule", agent_mode, ...}  — 主线调度过程（召回/四维打分/权重/选择）
         2. {type:"pools", resident, shared, recalled_ids, kept_ids} — 双池向量库布局
-        3. {type:"sublines", items:[...]}      — 副线书签（共享池注入隔离 workspace）
-        4. {type:"answer_delta", text}         — 主线 Agent 流式回答（逐字/逐段）
-        5. {type:"done", ...}                  — 结束信号
+        3. {type:"answer_delta", text}         — 主线 Agent 流式回答（逐字/逐段）
+        4. {type:"done", ...}                  — 结束信号
         """
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length > 0 else b"{}"
@@ -456,7 +634,6 @@ class Handler(BaseHTTPRequestHandler):
             payload = {}
         query = (payload.get("query") or "").strip()
         task_tag = payload.get("task_tag", "")
-        run_sub = bool(payload.get("run_sub", False))
 
         # SSE 响应头
         self.send_response(200)
@@ -524,13 +701,7 @@ class Handler(BaseHTTPRequestHandler):
                 "max_shared": mid.config.max_shared,
             }, ensure_ascii=False))
 
-            # ③ 副线书签（共享池注入隔离 workspace；run_sub 时运行真实副线 Agent，
-            #    reviewer 已拿到主线回答做一致性校验）
-            sub_items = rt.sub_lines(query, kept_texts, main_answer, run_sub)
-            self._send_sse(json.dumps({"type": "sublines", "items": sub_items},
-                                      ensure_ascii=False))
-
-            # ④ 主线回答流式推送（预计算文本切片）
+            # ③ 主线回答流式推送（预计算文本切片）
             for chunk in _slice_text(main_answer):
                 self._send_sse(json.dumps({"type": "answer_delta", "text": chunk},
                                           ensure_ascii=False))
@@ -562,8 +733,10 @@ def _slice_text(text: str, size: int = 4):
 
 
 def main() -> None:
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"可视化冒烟控制台已启动: http://127.0.0.1:{PORT}/")
+    # 本地默认只绑 127.0.0.1；服务器部署用 BIND_HOST=0.0.0.0 对外提供服务
+    host = os.environ.get("BIND_HOST", "127.0.0.1")
+    srv = ThreadingHTTPServer((host, PORT), Handler)
+    print(f"可视化冒烟控制台已启动: http://{host}:{PORT}/")
     print("（真实 API 链路 · 密钥读取自 .env；Ctrl+C 停止）")
     try:
         srv.serve_forever()
