@@ -339,11 +339,12 @@ def test_budget_adaptive_off_by_default():
     assert b.maybe_adjust() is None
     assert b.tier == start_tier, "adaptive=False 时档位不得自动变化（保复现）"
 
-    b2 = BudgetController(cfg=BudgetConfig(adaptive=True))
+    # 降档需从非最低档起步（默认档已是 fast，无法再降）
+    b2 = BudgetController(cfg=BudgetConfig(adaptive=True), tier="full")
     for _ in range(40):
         b2.note_latency(5000.0)
     ch = b2.maybe_adjust()
-    assert ch is not None and b2.tier == "fast", "adaptive=True 时超预算应降档"
+    assert ch is not None and b2.tier in ("balanced", "fast"), "adaptive=True 时超预算应降档"
     assert b2.percentiles()["p90"] > 900
 
 
