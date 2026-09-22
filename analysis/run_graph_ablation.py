@@ -95,7 +95,7 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
     from srtp_memory.middleware import MemorySchedulingMiddleware
 
     from .graph_metrics import (ceiling, cross_source_relevance, dedup_rate,
-                               multi_source_ratio, recall_at_kept,
+                               mrr, multi_source_ratio, ndcg_at_k, recall_at_kept,
                                recall_normalized, source_hit_rate)
 
     cfg = SchedulingConfig.load(cfg_path)
@@ -167,6 +167,8 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
                 "recall_kept": round(r, 6),
                 "ceiling": round(ceil, 6),
                 "recall_norm": recall_normalized(r, ceil),
+                "mrr": mrr(kept_ids, rel),
+                "ndcg_at_k": ndcg_at_k(kept_ids, rel, injection_cap),
                 "source_hit_rate": source_hit_rate(selected, ep["relevant_sources"]),
                 "multi_source_ratio": round(multi_source_ratio(kept_owners), 6),
                 "cross_source_relevance": cross_source_relevance(kept_owners, res.src_scores),
@@ -259,6 +261,7 @@ def main() -> None:
               f"norm={s['avg_recall_norm']} src_hit={s['avg_source_hit_rate']} "
               f"multi_src={s['avg_multi_source_ratio']}"
               f"(multi-subset={s['avg_multi_source_ratio_multi']}) "
+              f"mrr={s['avg_mrr']} ndcg={s['avg_ndcg_at_k']} "
               f"kept={s['avg_kept']} p90={s['p90_latency_ms']}ms llm={s['avg_llm_calls']}")
 
     # ---- 落盘 ----

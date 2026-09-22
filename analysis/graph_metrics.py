@@ -69,6 +69,47 @@ def dedup_rate(n_after: int, n_before: int) -> float:
     return round(max(0, n_before - n_after) / n_before, 6)
 
 
+# ---------------------------------------------------------------------------
+# rank-based 指标（S2' 方法学修正）
+#
+# **为什么需要**：recall@K 在 `|relevant| ≪ K` 时**天然不敏感** ——
+# 只要相关记忆都进了候选且排名不太靠后，recall@K 就恒等于 1，
+# 干扰项再强也"挤不掉"相关记忆（因为名额够多）。
+# 本轮实测确认：干扰项把语义 top-4 变成 [相关, 干扰, 相关, 干扰]，
+# 但 recall@8 仍 = 2/2 = 1.0 → **recall@8 对排序质量零区分度**。
+#
+# 补两个对**排序位置**敏感的标准指标：
+#   - MRR      ：第一条相关记忆的倒数排名均值（对"最相关的排在第几"敏感）
+#   - nDCG@K   ：分级增益折扣（对"相关记忆整体排多靠前"敏感，标准 IR 指标）
+# ---------------------------------------------------------------------------
+
+
+def mrr(kept_ids: list[str], relevant: list[str]) -> float:
+    """平均倒数排名：kept 中第一条相关记忆排名的倒数；kept 内无相关 → 0。"""
+    rel = set(relevant)
+    for i, mid in enumerate(kept_ids, 1):
+        if mid in rel:
+            return 1.0 / i
+    return 0.0
+
+
+def ndcg_at_k(kept_ids: list[str], relevant: list[str], k: int | None = None) -> float:
+    """nDCG@K（二值增益）。kept 已按 final 降序 → 位置即排名。"""
+    rel = set(relevant)
+    if not rel:
+        return 0.0
+    k = len(kept_ids) if k is None else min(k, len(kept_ids))
+    dcg = sum(1.0 / math_log2(i + 1) for i, mid in enumerate(kept_ids[:k], 1) if mid in rel)
+    ideal_hits = min(len(rel), k)
+    idcg = sum(1.0 / math_log2(i + 1) for i in range(1, ideal_hits + 1))
+    return round(dcg / idcg, 6) if idcg > 0 else 0.0
+
+
+def math_log2(x: float) -> float:
+    import math
+    return math.log2(x)
+
+
 def aggregate(rows: list[dict]) -> dict:
     """把一个 group 的所有 episode 行聚合成摘要（含天花板与多源占比）。"""
     n = len(rows)
@@ -98,6 +139,8 @@ def aggregate(rows: list[dict]) -> dict:
         "avg_recall_kept": avg("recall_kept"),
         "avg_ceiling": avg("ceiling"),
         "avg_recall_norm": avg("recall_norm"),
+        "avg_mrr": avg("mrr"),
+        "avg_ndcg_at_k": avg("ndcg_at_k"),
         "avg_source_hit_rate": nanavg("source_hit_rate"),
         "avg_multi_source_ratio": avg("multi_source_ratio"),
         "avg_multi_source_ratio_multi": avg_multi("multi_source_ratio"),

@@ -375,6 +375,51 @@ EDGES: list[tuple[str, str, str]] = [
     ("n_feedback", "n_demo", "similar_to"),
 ]
 
+# ── 语义干扰项（S2'）────────────────────────────────────────────────────────
+# 设计意图：v2 数据集的相关标注只看"语义是否命中查询主题"，没有"语义相似但应被排除"
+# 的样本 → time/task 维无用武之地，打分器不可能显著超过"不调度"的 G0（实测确认）。
+# 本节补两类干扰项，让 time / task 维有发挥空间：
+#
+#   A. **过时版本**（考 time 维）：与某条"当前版"记忆语义高度重叠（查询词都能命中），
+#      但时间戳**早于**所在模块的普通记忆 → time 头应压低它。
+#      文本刻意保持中性（用"v1 方案 / 早期设计 / 曾计划"），不带"已废弃"等显式标记，
+#      避免语义检索器靠字面就识破 —— 这样只有 time 维能区分，干扰才有效。
+#      标注理由：v1 设计已被对应"当前版"取代，人工判定为不相关（可辩护，见 replaced_by）。
+#
+#   B. **跨任务口径**（考 task 维）：task_tag ≠ 任务级标签 research（如运维/教学/评审口径），
+#      句式与某些查询高度重叠但属于另一类任务口径 → task 头应压低它。
+#      attention.noop（G0/G1）完全不看 task_tag → 会被这类干扰拖累；
+#      attention.full/normalized 会压它 → 形成可检验的对照。
+#
+# 干扰项**不进入任何查询的 relevant 集**；它们进候选集后会挤占 K 个名额，
+# 从而使"无算法"的 G0/G1 recall 下降、而"有算法"的 G3/G4 保持 —— 这正是要检验的。
+
+#: A. 过时版本：(owner_node, 文本, 被哪条取代)。时间戳自动取所在模块起点前 2 小时。
+STALE_VERSIONS: list[tuple[str, str, str]] = [
+    ("n_config", "调度阈值 threshold 在 v1 方案中默认 0.7", "n_config_m1"),
+    ("n_config", "共享池上限 max_shared 早期设计为 8 条", "n_config_m2"),
+    ("n_config", "候选集 candidate_override 曾计划 30 条", "n_config_m3"),
+    ("n_embed", "文本向量化曾计划采用 text-embedding-v3", "n_embed_m1"),
+    ("n_embed", "向量维度早期方案是 768 维", "n_embed_m2"),
+    ("n_retrieval", "候选集曾统一返回 30 条", "n_retrieval_m5"),
+    ("n_attention", "四维默认权重早期为 0.3/0.3/0.2/0.2", "n_attention_m2"),
+    ("n_weights", "混合权重早期设计为 0.5 乘先验加 0.5 乘可学习", "n_weights_m1"),
+    ("n_pool", "共享池早期上限设计为 8 条", "n_pool_m2"),
+    ("n_graph", "边强度与相关度早期按 0.5 与 0.5 融合", "n_graph_m7"),
+    ("n_graph", "邻域扩散深度曾计划两跳", "n_graph_m10"),
+    ("n_metrics", "全链路延迟要求早期写为 2 秒", "n_metrics_m7"),
+]
+
+#: B. 跨任务口径：(owner_node, 文本, task_tag)。时间戳取所在模块的普通时间。
+CROSS_TASK_ITEMS: list[tuple[str, str, str]] = [
+    ("n_deploy", "运维口径：共享池告警阈值设为 12 条", "ops"),
+    ("n_deploy", "运维口径：演示服务内存上限 1500M", "ops"),
+    ("n_config", "教学演示口径：阈值示例取 0.5", "teaching"),
+    ("n_pool", "容量规划口径：共享池预留 15 条", "planning"),
+    ("n_embed", "接口兼容口径：维度可回退 768", "compat"),
+    ("n_attention", "调参口径：语义头系数曾试 0.4/0.4/0.2", "tuning"),
+]
+
 # ── 查询表（人工标注 ground truth，与边强度独立）─────────────────────────────
 # (当前节点, 查询, [相关记忆 id])。多源查询 = 相关记忆跨 >=2 个上游源。
 QUERIES: list[tuple[str, str, list[str]]] = [
@@ -439,7 +484,9 @@ def _check_dag(nodes: list[str], edges: list[tuple[str, str, str]]) -> None:
 
 
 def build_graph_payload() -> tuple[list[dict], list[dict]]:
+    """构造全图 nodes / corpus（所有 episode 共用同一张图，含 S2' 语义干扰项）。"""
     corpus: list[dict] = []
+    node_idx = {m["id"]: ni for ni, m in enumerate(MODULES)}
     for ni, m in enumerate(MODULES):
         for i, text in enumerate(m["mems"], 1):
             corpus.append({
@@ -449,6 +496,37 @@ def build_graph_payload() -> tuple[list[dict], list[dict]]:
                 "owner_node": m["id"],
                 "timestamp": TIME_BASE + ni * NODE_SPAN_H * HOUR + (i - 1) * 0.25 * HOUR,
             })
+
+    # A. 过时版本干扰项：时间戳取所在模块起点前 2 小时（必早于该模块所有普通记忆）
+    #    → time 头会给它低分；语义上却与"当前版"高度重叠，检索器无法靠字面排除。
+    for k, (owner, text, replaced_by) in enumerate(STALE_VERSIONS, 1):
+        if owner not in node_idx:
+            raise ValueError(f"过时版本干扰项的 owner 未知: {owner}")
+        ni = node_idx[owner]
+        corpus.append({
+            "memory_id": f"{owner}_stale{k}",
+            "text": text,
+            "task_tag": TASK_TAG,
+            "owner_node": owner,
+            "timestamp": TIME_BASE + ni * NODE_SPAN_H * HOUR - 2 * HOUR,
+            "kind": "stale_version",
+            "replaced_by": replaced_by,
+        })
+
+    # B. 跨任务口径干扰项：task_tag != research（task 头应压低）；时间戳取所在模块正常时间。
+    for k, (owner, text, tag) in enumerate(CROSS_TASK_ITEMS, 1):
+        if owner not in node_idx:
+            raise ValueError(f"跨任务干扰项的 owner 未知: {owner}")
+        ni = node_idx[owner]
+        corpus.append({
+            "memory_id": f"{owner}_xtra{k}",
+            "text": text,
+            "task_tag": tag,
+            "owner_node": owner,
+            "timestamp": TIME_BASE + ni * NODE_SPAN_H * HOUR + 1.5 * HOUR,
+            "kind": "cross_task",
+        })
+
     nodes = [{"node_id": m["id"], "topic": m["topic"],
               "summary": f"{m['topic']}：" + "；".join(m["mems"][:8])} for m in MODULES]
     return nodes, corpus
@@ -504,13 +582,17 @@ def main() -> None:
         types[t] = types.get(t, 0) + 1
     forked = [n for n in node_ids if sum(1 for s, _d, _t in EDGES if s == n) >= 2]
     multi = [e for e in episodes if len(e["relevant_sources"]) >= 2]
+    n_stale = sum(1 for c in corpus if c.get("kind") == "stale_version")
+    n_xtra = sum(1 for c in corpus if c.get("kind") == "cross_task")
     print(f"OK {out}  ({len(episodes)} episodes)")
     print(f"   nodes={len(node_ids)} edges={len(EDGES)} memories={len(corpus)} "
-          f"(per node {min(per_node.values())}~{max(per_node.values())})")
+          f"(core=280, stale_distractors={n_stale}, cross_task_distractors={n_xtra})")
     print(f"   edge types: {types}")
     print(f"   forked(outdeg>=2): {len(forked)}")
     print(f"   |relevant| set: {sorted({len(e['relevant']) for e in episodes})}")
     print(f"   multi-source queries: {len(multi)}/{len(episodes)}")
+    print("   NOTE: 干扰项不进任何 relevant 集 —— 它们进候选后会挤占 K 名额，")
+    print("         用于检验 time/task 维能否把'语义相似但应排除'的样本压下去。")
 
 
 if __name__ == "__main__":
