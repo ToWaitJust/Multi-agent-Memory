@@ -18,6 +18,12 @@ class GraphConfig(BaseModel):
     source_mode: str = "auto"         # auto（邻域扩散）| manual（用户勾选源节点）
     depth: int = 1                    # 邻域扩散深度（P1 封顶）
     source_topk: int = 3              # 最多取几个源
+    #: ~~D-028~~ **已撤销**：邻域源数 ≤ 此值时不做 top-k 裁剪。
+    #: 撤销原因（F1 实测）：① 对 G3/G4 零收益 —— n_paper 被裁掉的 n_deploy(0.3 弱边) 里
+    #:   根本没有相关记忆；② **破坏实验对照** —— source_topk=1 的 G2（主副线等价物）
+    #:   被绕过而取了全部 4 个源，"单源"语义失效，S-C 的 G2 vs G3 对比不再成立。
+    #: 保留字段并默认 0（关闭），仅为将来在**大图**（源数 >8）场景重新评估留口子。
+    source_topk_full_cover: int = 0
     quota_mode: str = "soft_bias"     # none | uniform | strength | soft_bias
     quota_tau: float = 0.5            # softmax 温度
     quota_lambda: float = 0.7         # 静态 strength vs 动态 relevance 的融合系数（固定超参）
@@ -61,6 +67,10 @@ class SchedulingConfig(BaseModel):
     alpha: float = 0.6                # LLM 先验权重占比
     beta: float = 0.4                 # 可学习权重占比
     top_k: int = 5                    # 共享池注入上限保护（FR-2）
+    # ---- F1 级联过滤参数（仅 selector.cascade 生效，单变量可消融）----
+    cascade_task_filter: bool = True      # 口径隔离（异 task_tag 出局）
+    cascade_version_filter: bool = True   # 版本消歧（同事实旧版本出局）
+    cascade_version_cos: float = 0.9      # "同一事实的多版本"判定阈值
     candidate_override: int = 50      # 调度候选集规模（统一 50，FR-2）
     task_tag: str = "main_task"       # 当前任务标签（任务注意力）
     llm_prior_samples: int = 1        # LLM 先验采样次数（实时小模型，单次，预算 ≤800ms）
@@ -97,6 +107,8 @@ class SchedulingConfig(BaseModel):
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
 
     # ---- S0 修复：批级归一化注意力的语义保底权重（仅 attention.normalized 生效）----
+    # 取值 0.0 = 纯门控+按比例再分配；0.5 = 语义至少占一半权重。
+    attention_semantic_floor: float = 0.5
     # 取值 0.0 = 纯门控+按比例再分配；0.5 = 语义至少占一半权重。
     attention_semantic_floor: float = 0.5
 

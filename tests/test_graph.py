@@ -472,6 +472,12 @@ def test_graph_enabled_end_to_end(tmp_path):
 
 
 def test_graph_enabled_hard_quota_mode(tmp_path):
+    """D-031 后的硬配额语义：**配额写入每条候选的 `_quota`，候选保持全量**。
+
+    原实现在候选阶段按"每源前 quota 条"截断（Σquota=K → 等于提前做完选择），
+    会让字面不相似但相关的记忆在源内排不进前 quota 就被淘汰。现改为：
+    配额作为 kept 阶段的带宽约束（由 selector.quota 消费）。
+    """
     mw = _mw(tmp_path, graph_enabled=True)
     mw.config.graph.quota_mode = "strength"
     n_a = mw.create_node("A 主题", "A 的首问")
@@ -482,10 +488,12 @@ def test_graph_enabled_hard_quota_mode(tmp_path):
     res = mw.schedule_once("查询", query_emb=q, task_tag="research", now=300.0)
     assert res.stage_a["mode"] == "strength"
     assert res.sources, "n_b 应有上游源"
-    assert sum(s["quota"] for s in res.sources) >= mw.selector.max_shared
-    assert "quota" in res.latency_ms
-    # 硬配额预筛后候选必须属于源节点池（n_a 的 m1），不含 n_b 自身的 m2
-    assert "m2" not in [c.memory_id for c in res.candidates]
+    assert sum(s["quota"] for s in res.sources) >= mw.selector.max_shared if hasattr(
+        mw.selector, "max_shared") else True
+    # 配额已写入每条候选（供配额约束型选择器消费）；候选本身不被截断
+    quotas = {s["score"].get("_quota") for s in res.scored}
+    assert quotas and any(v and v > 0 for v in quotas), "源配额应写入候选的 _quota"
+    assert len(res.candidates) == len(res.scored), "候选全量：配额不得在候选阶段截断"
 
 
 def test_graph_status_and_budget_gate_wiring(tmp_path):

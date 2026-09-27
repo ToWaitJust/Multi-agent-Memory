@@ -50,6 +50,7 @@ class ScheduleResult:
     src_scores: dict[str, float] = field(default_factory=dict)
     scope_size: int = 0                                   # 邻域候选池规模
     scope_ratio: float = 0.0                              # kept / scope_size
+    quota_dropped: int = 0                                # 被硬配额筛掉的候选条数（D-030）
     stage_a: dict = field(default_factory=dict)
     perf_tier: str = ""
     llm_calls: int = 0
@@ -156,8 +157,13 @@ class MemoryCoordinator:
             res.src_scores = {s.node_id: round(s.src_score, 6) for s in sel.sources}
             res.stage_a = sel.to_dict()
             res.latency_ms["stage_a"] = _now_ms() - t0
-            if mode == "soft_bias":
-                bonus = self.source_selector.bonus_map(sel, mu)
+            # D-032：**所有配额模式都叠加源软偏置**（原先只有 soft_bias 模式算）。
+            # 理由（S-C 实测）：链式依赖场景里相关记忆"字面不相似"（语义分天然低），
+            # 仅靠硬配额管带宽救不回来 —— 它们在源内 final 排名就靠后。
+            # 源软偏置 μ·src_score 是**图结构先验的直接注入**：来自高价值源的记忆
+            # 应获得加成，这才是"多对多选源"对 Stage B 排序的实际贡献。
+            # 硬配额管"带宽分配"，软偏置管"结构加成"，两者互补而非互斥。
+            bonus = self.source_selector.bonus_map(sel, mu)
 
         # ---------------- ② 候选召回（限定邻域源，可选）----------------
         t0 = _now_ms()
@@ -172,14 +178,6 @@ class MemoryCoordinator:
         candidates = self._recall(query, scope, top_k, query_emb, scoped=scoped)
         res.candidates = candidates
         res.latency_ms["recall"] = _now_ms() - t0
-
-        # 硬配额：按每源配额预筛（填充式；POC 已证与封顶式数学等价）
-        # 无源时不预筛（否则会把候选集清空 —— 冷启动期图还没边，必须退回不限范围）
-        if (self.graph_enabled and mode in ("strength", "uniform")
-                and sel is not None and sel.sources):
-            t0 = _now_ms()
-            candidates = _apply_hard_quota(candidates, sel)
-            res.latency_ms["quota"] = _now_ms() - t0
 
         # ---------------- ③ 混合权重（先验由中间件提前 set_prior）--------
         t0 = _now_ms()
@@ -214,6 +212,19 @@ class MemoryCoordinator:
                 sc["src_score"] = res.src_scores.get(owner, 0.0)
                 res.scored.append({"memory": c, "score": sc, "via_source": owner})
         res.latency_ms["scoring"] = _now_ms() - t0
+
+        # ---------------- ⑤ 源配额 → 写入每条候选（**不截断候选**，D-031）----------------
+        # ⚠️ D-031：硬配额原先在候选阶段"每源取前 quota 条"截断，且 Σquota 恰好 = K，
+        #    等于**把选择提前做掉了** —— Stage B 的语义排序完全没有作用空间。
+        #    实测后果：S-C（链式依赖）里字面不相似的相关记忆（语义分低）在源内排不进
+        #    前 quota 就被剔除，候选命中率从"应有的全量"掉到 0.19。
+        #    正确语义：**配额是 kept 阶段的带宽约束**（每源最多贡献 quota 条），
+        #    候选保持全量让 Stage B 打分排序，再由配额约束型选择器决定最终注入集。
+        qmap: dict[str, int] = {}
+        if self.graph_enabled and mode in ("strength", "uniform") and sel is not None:
+            qmap = {s.node_id: max(1, int(s.quota)) for s in sel.sources}
+        for item in res.scored:
+            item["score"]["_quota"] = qmap.get(item["via_source"] or "", 0)
 
         # ---------------- ④ 动作选择 ----------------
         t0 = _now_ms()
@@ -317,22 +328,28 @@ def _to_list(vec) -> Optional[list[float]]:
         return None
 
 
-def _apply_hard_quota(candidates: list[MemoryCandidate], sel) -> list[MemoryCandidate]:
-    """硬配额预筛：每源取前 quota 条（按原始召回序，源内已由检索器排序）。
+def _apply_hard_quota(scored: list[dict], sel) -> list[dict]:
+    """硬配额筛选（**在打分之后**执行，按 `final` 而非原始召回序分配带宽）。
 
-    返回顺序 = 源顺序（边强度/源分降序），保持"先选源再选记忆"的可解释性。
+    D-030 修正：原实现在打分前按"源内召回序（纯语义）"取前 quota 条，
+    使配额无法感知 time/task 等维度的信息 —— S-B（口径隔离）里某个源内
+    唯一匹配口径的记忆因纯语义序靠后而被提前剔除，导致该组完全失手。
+    现在改为：**源内按 final 降序取前 quota 条**，再按源顺序拼回
+    （保持"先选源再选记忆"的可解释性：源顺序 = src_score 降序）。
     """
-    by_node: dict[str, list[MemoryCandidate]] = {}
-    for c in candidates:
-        by_node.setdefault(getattr(c, "owner_node", "main") or "main", []).append(c)
-    out: list[MemoryCandidate] = []
+    by_node: dict[str, list[dict]] = {}
+    for item in scored:
+        by_node.setdefault(item.get("via_source") or "main", []).append(item)
+    out: list[dict] = []
     seen: set[str] = set()
     for s in sel.sources:
-        picked = by_node.get(s.node_id, [])[: max(1, int(s.quota))]
-        for c in picked:
-            if c.memory_id not in seen:
-                seen.add(c.memory_id)
-                out.append(c)
+        pool = by_node.get(s.node_id, [])
+        pool.sort(key=lambda x: x["score"].get("final", 0.0), reverse=True)
+        for item in pool[: max(1, int(s.quota))]:
+            mid = item["memory"].memory_id
+            if mid not in seen:
+                seen.add(mid)
+                out.append(item)
     return out
 
 

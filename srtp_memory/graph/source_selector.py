@@ -109,9 +109,12 @@ class SourceSelector:
             ))
 
         # ④ 源裁剪（top-k）
+        #    注：`source_topk_full_cover` 为 D-028 遗留开关，默认 0（关闭）——
+        #    F1 实测证明"小图不裁剪"对 G3/G4 零收益且会破坏 G2 的单源对照，已废弃。
         refs.sort(key=lambda r: r.src_score, reverse=True)
         topk = int(getattr(c, "source_topk", 3))
-        if topk > 0:
+        full_cover = int(getattr(c, "source_topk_full_cover", 0) or 0)
+        if topk > 0 and len(refs) > max(topk, full_cover):
             refs = refs[:topk]
         if not refs:
             sel.reason = "源裁剪后为空"
@@ -160,6 +163,7 @@ class _DefaultCfg:
 
     depth = 1
     source_topk = 3
+    source_topk_full_cover = 0        # D-028 已撤销（默认关闭）：见 config 注释
     quota_mode = "soft_bias"
     quota_tau = 0.5
     quota_lambda = 0.7

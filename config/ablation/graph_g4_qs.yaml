@@ -1,0 +1,34 @@
+# graph_g4_qs.yaml —— 配额约束选择器 + 口径/版本硬约束（D-031 + F1 组合）
+# graph_g4_casc.yaml —— G4 + 级联过滤（口径隔离 + 版本消歧，全开）
+# 基线 = G4 完整方案（图 + 多源选源 + 四维打分 + 边强度配额）。
+# 本系列只改**选择器**：从 selector.topk（纯语义排序）换成 selector.cascade
+# （v2 方案 F1：语义主排序 + 多维硬约束过滤），用于检验"过滤"是否优于"加权融合"。
+retriever_impl: retriever.vector
+attention_impl: attention.full
+weight_impl:    weight.full
+selector_impl:  selector.quota     # ★ 与 graph_g4 的唯一差异
+embedding_impl: embed.dashscope
+reward_impl:    reward.explicit
+conditioning_dims: [semantic, task]
+model_impl:     model.dashscope
+top_k: 8                              # 五组统一固定 K（归因修 D-023）
+cascade_task_filter: true
+cascade_version_filter: true
+cascade_version_cos: 0.9
+threshold: 0.0
+graph:
+  enabled: true
+  source_mode: auto
+  depth: 1
+  source_topk: 3
+  source_topk_full_cover: 5           # D-028：源数 ≤5 不裁剪，防小图漏源
+  quota_mode: strength
+  quota_lambda: 0.7
+  quota_tau: 0.5
+  min_quota: 1
+# 完整方法显式启用 LLM 先验（default_tier=full）。
+# 代价已实测：p90 约 1.1~1.6s，**超出 NFR-1(<1s)**；均衡档 B1 证明跳过先验可降到 ~2ms。
+budget:
+  default_tier: full
+  adaptive: false
+graph_provenance: "由 analysis/run_graph_ablation.py 从 data/graph_dataset.jsonl 固定图结构注入"

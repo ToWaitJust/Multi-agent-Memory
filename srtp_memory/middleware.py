@@ -100,6 +100,13 @@ class MemorySchedulingMiddleware:
             self.selector = get_plugin(self.config.selector_impl,
                                        threshold=self.config.threshold,
                                        max_shared=self.config.max_shared)
+        elif self.config.selector_impl == "selector.cascade":
+            # F1 级联：语义主排序 + 硬约束过滤（参数单变量可消融）
+            self.selector = get_plugin(
+                self.config.selector_impl, top_k=self.config.top_k,
+                task_filter=self.config.cascade_task_filter,
+                version_filter=self.config.cascade_version_filter,
+                version_cos=self.config.cascade_version_cos)
         else:
             self.selector = get_plugin(self.config.selector_impl,
                                        top_k=self.config.top_k)
