@@ -67,7 +67,13 @@ class SchedulingConfig(BaseModel):
     alpha: float = 0.6                # LLM 先验权重占比
     beta: float = 0.4                 # 可学习权重占比
     top_k: int = 5                    # 共享池注入上限保护（FR-2）
-    # ---- F1 级联过滤参数（仅 selector.cascade 生效，单变量可消融）----
+    # ---- D-034：禁用的注意力维度 ----
+    # 动机：`time = exp(-0.01·t_h)` 是**绝对年龄**，会系统性偏袒"产生较晚的模块"的记忆。
+    # 实测（S-C 链式依赖 sc_01）：n_demo（模块索引 10）的 time 分 0.80，
+    # 而 n_config（索引 0）只有 0.43 → n_config 的相关记忆被整体压低 0.2+ 的 final，
+    # 排不进 kept。既然**版本消歧已由级联过滤（基于时间戳的硬规则）保证**，
+    # time 就不该再参与打分 —— 与"多维约束用过滤、不用打分"的总体设计哲学一致。
+    attention_disabled_dims: list[str] = Field(default_factory=list)
     cascade_task_filter: bool = True      # 口径隔离（异 task_tag 出局）
     cascade_version_filter: bool = True   # 版本消歧（同事实旧版本出局）
     cascade_version_cos: float = 0.9      # "同一事实的多版本"判定阈值

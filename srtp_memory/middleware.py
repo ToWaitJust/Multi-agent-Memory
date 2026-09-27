@@ -177,6 +177,11 @@ class MemorySchedulingMiddleware:
         # LLM 先验：门控 + 缓存（成本侧机制一）→ 未命中才真调用
         self._apply_prior(query, cond, n_candidates=top_k)
 
+        # D-034：按配置屏蔽注意力维度（如关掉 time 的绝对年龄偏好）
+        if self.config.attention_disabled_dims:
+            all_dims = {"time", "semantic", "frequency", "task"}
+            enabled_dims = sorted(all_dims - set(self.config.attention_disabled_dims))
+
         res = self.coordinator.schedule(
             query=query, query_emb=query_emb, task_tag=task_tag,
             now=now, enabled_dims=enabled_dims, condition=cond,
