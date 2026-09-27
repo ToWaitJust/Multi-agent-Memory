@@ -420,6 +420,53 @@ CROSS_TASK_ITEMS: list[tuple[str, str, str]] = [
     ("n_attention", "调参口径：语义头系数曾试 0.4/0.4/0.2", "tuning"),
 ]
 
+# ── S-A 时序演进场景：版本链（考 time 维，E1）────────────────────────────────
+# 设计：同一事实的 3 个版本，文本仅版本词与取值不同（语义几乎不可分），
+#       时间戳按版本递增、跨度 96 小时级（LAMBDA_TIME=0.01/h 下 time 才有区分度）。
+# 查询不带任何版本词（避免语义偏向当前版）→ 语义检索无法区分版本，
+#       旧版（干扰）与当前版（相关）的余弦几乎相同 → 排序由 time 维决定。
+# 旧版 task_tag 仍为 research → task 头不参与，场景纯净（只考 time）。
+SA_CHAINS: list[dict] = [
+    {"owner": "n_config", "subject": "共享池的容量上限",
+     "versions": [("第一版", "八条"), ("第二版", "九条"), ("当前版", "十条")], "cur": 3,
+     "cur_node": "n_embed"},
+    {"owner": "n_config", "subject": "调度阈值的默认值",
+     "versions": [("第一版", "0.7"), ("第二版", "0.65"), ("当前版", "0.6")], "cur": 3,
+     "cur_node": "n_embed"},
+    {"owner": "n_embed", "subject": "向量化输出的维度",
+     "versions": [("第一版", "768 维"), ("第二版", "512 维"), ("当前版", "1024 维")], "cur": 3,
+     "cur_node": "n_retrieval"},
+    {"owner": "n_weights", "subject": "先验与可学习的融合比例",
+     "versions": [("第一版", "各占一半"), ("第二版", "六四开"), ("当前版", "0.6 与 0.4")], "cur": 3,
+     "cur_node": "n_feedback"},
+    {"owner": "n_metrics", "subject": "全链路延迟的验收要求",
+     "versions": [("第一版", "两秒"), ("第二版", "一点五秒"), ("当前版", "一秒")], "cur": 3,
+     "cur_node": "n_paper"},
+    {"owner": "n_graph", "subject": "边强度与相关度的融合比例",
+     "versions": [("第一版", "各占一半"), ("第二版", "六四开"), ("当前版", "0.7 与 0.3")], "cur": 3,
+     "cur_node": "n_demo"},
+]
+
+# ── S-B 口径隔离场景：同一参数多口径（考 task 维，E1）────────────────────────
+# 设计：同一主体在不同任务口径下取值不同，文本除口径词与取值外几乎相同、
+#       时间戳相同（time 不参与，场景纯净只考 task）。
+# 查询带口径标签（episode.task_tag = q_task），relevant = 该口径的版本，
+#       其余口径版本为干扰（task 头应压低）。
+SB_PARAMS: list[dict] = [
+    {"owner": "n_pool", "subject": "共享池的容量上限",
+     "values": {"ops": "十二条", "research": "十条", "demo": "六条"}, "q_task": "ops",
+     "cur_node": "n_graph"},
+    {"owner": "n_config", "subject": "调度阈值的默认值",
+     "values": {"ops": "0.5", "research": "0.6", "demo": "0.4"}, "q_task": "ops",
+     "cur_node": "n_embed"},
+    {"owner": "n_metrics", "subject": "单条打分的耗时要求",
+     "values": {"ops": "五毫秒", "research": "十毫秒", "demo": "二十毫秒"}, "q_task": "ops",
+     "cur_node": "n_paper"},
+    {"owner": "n_embed", "subject": "向量化输出的维度",
+     "values": {"ops": "512 维", "research": "1024 维", "demo": "768 维"}, "q_task": "ops",
+     "cur_node": "n_retrieval"},
+]
+
 # ── 查询表（人工标注 ground truth，与边强度独立）─────────────────────────────
 # (当前节点, 查询, [相关记忆 id])。多源查询 = 相关记忆跨 >=2 个上游源。
 QUERIES: list[tuple[str, str, list[str]]] = [
@@ -527,6 +574,47 @@ def build_graph_payload() -> tuple[list[dict], list[dict]]:
             "kind": "cross_task",
         })
 
+    # C. S-A 时序演进场景：版本链（考 time 维）。
+    #    同一事实 3 个版本，文本仅版本词/取值不同（语义几乎不可分）；
+    #    时间戳 = 场景基准时刻 now 往前 (n-k+1)*96h → 当前版最新、区分度足够
+    #    （LAMBDA_TIME=0.01/h，96h 差 → time 分 0.38 vs 0.99）。旧版 task_tag 仍为 research。
+    sa_now = TIME_BASE + len(MODULES) * NODE_SPAN_H * HOUR + HOUR
+    for ci, ch in enumerate(SA_CHAINS, 1):
+        if ch["owner"] not in node_idx:
+            raise ValueError(f"S-A 版本链 owner 未知: {ch['owner']}")
+        n_v = len(ch["versions"])
+        if ch["cur"] != n_v:
+            raise ValueError(f"S-A 链{ci} 当前版序号须为最后一版")
+        for k, (ver_word, val) in enumerate(ch["versions"], 1):
+            corpus.append({
+                "memory_id": f"{ch['owner']}_sa{ci}v{k}",
+                "text": f"{ch['subject']}：{ver_word}取值{val}",
+                "task_tag": TASK_TAG,               # 与查询同口径 → task 不参与，纯考 time
+                "owner_node": ch["owner"],
+                "timestamp": sa_now - (n_v - k + 1) * 96 * HOUR,
+                "kind": "sa_version",
+                "chain": ci, "version": k,
+                "is_current": (k == ch["cur"]),
+            })
+
+    # D. S-B 口径隔离场景：同一参数多口径（考 task 维）。
+    #    文本除口径词/取值外几乎相同、时间戳相同（time 不参与，纯考 task）；
+    #    相关版 task_tag = 查询口径，其余口径 = 干扰。
+    for pi, pm in enumerate(SB_PARAMS, 1):
+        if pm["owner"] not in node_idx:
+            raise ValueError(f"S-B 参数 owner 未知: {pm['owner']}")
+        ni = node_idx[pm["owner"]]
+        for tag, val in pm["values"].items():
+            corpus.append({
+                "memory_id": f"{pm['owner']}_sb{pi}_{tag}",
+                "text": f"{pm['subject']}：{tag}口径取值{val}",
+                "task_tag": tag,
+                "owner_node": pm["owner"],
+                "timestamp": TIME_BASE + ni * NODE_SPAN_H * HOUR + 1.0 * HOUR,
+                "kind": "sb_param",
+                "param": pi,
+            })
+
     nodes = [{"node_id": m["id"], "topic": m["topic"],
               "summary": f"{m['topic']}：" + "；".join(m["mems"][:8])} for m in MODULES]
     return nodes, corpus
@@ -569,6 +657,50 @@ def main() -> None:
             "corpus": corpus,
             "relevant": sorted(rel_mems),
             "relevant_sources": rel_sources,
+            "scene": "fact",
+        })
+
+    # E1 场景 episodes：S-A 时序演进（考 time）/ S-B 口径隔离（考 task）
+    ep_now = TIME_BASE + len(MODULES) * NODE_SPAN_H * HOUR + HOUR
+    for ci, ch in enumerate(SA_CHAINS, 1):
+        cur_id = f"{ch['owner']}_sa{ci}v{ch['cur']}"
+        if cur_id not in by_id:
+            raise ValueError(f"S-A 链{ci} 当前版记忆缺失: {cur_id}")
+        episodes.append({
+            "episode_id": f"sa_{ci:02d}",
+            "task_tag": TASK_TAG,                # 与记忆同口径 → 纯考 time
+            "user_id": "u_tu",
+            "scenario": "multi_module_project",
+            "business": "srtp",
+            "query": f"{ch['subject']}是多少",
+            "cur_node": ch["cur_node"],
+            "now": ep_now,
+            "nodes": nodes,
+            "edges": [{"src": s, "dst": d, "type": t} for s, d, t in EDGES],
+            "corpus": corpus,
+            "relevant": [cur_id],                # 只认当前版；旧版 = 干扰
+            "relevant_sources": [ch["owner"]],
+            "scene": "SA_time",
+        })
+    for pi, pm in enumerate(SB_PARAMS, 1):
+        cur_id = f"{pm['owner']}_sb{pi}_{pm['q_task']}"
+        if cur_id not in by_id:
+            raise ValueError(f"S-B 参数{pi} 口径记忆缺失: {cur_id}")
+        episodes.append({
+            "episode_id": f"sb_{pi:02d}",
+            "task_tag": pm["q_task"],            # 查询口径 → task 头是唯一区分维
+            "user_id": "u_tu",
+            "scenario": "multi_module_project",
+            "business": "srtp",
+            "query": f"{pm['subject']}是多少",
+            "cur_node": pm["cur_node"],
+            "now": ep_now,
+            "nodes": nodes,
+            "edges": [{"src": s, "dst": d, "type": t} for s, d, t in EDGES],
+            "corpus": corpus,
+            "relevant": [cur_id],                # 只认该口径；异口径 = 干扰
+            "relevant_sources": [pm["owner"]],
+            "scene": "SB_task",
         })
 
     out = ROOT / args.out
@@ -584,15 +716,20 @@ def main() -> None:
     multi = [e for e in episodes if len(e["relevant_sources"]) >= 2]
     n_stale = sum(1 for c in corpus if c.get("kind") == "stale_version")
     n_xtra = sum(1 for c in corpus if c.get("kind") == "cross_task")
-    print(f"OK {out}  ({len(episodes)} episodes)")
+    n_sa = sum(1 for c in corpus if c.get("kind") == "sa_version")
+    n_sb = sum(1 for c in corpus if c.get("kind") == "sb_param")
+    scenes: dict[str, int] = {}
+    for e in episodes:
+        scenes[e["scene"]] = scenes.get(e["scene"], 0) + 1
+    print(f"OK {out}  ({len(episodes)} episodes, scenes={scenes})")
     print(f"   nodes={len(node_ids)} edges={len(EDGES)} memories={len(corpus)} "
-          f"(core=280, stale_distractors={n_stale}, cross_task_distractors={n_xtra})")
+          f"(core=280, stale={n_stale}, cross_task={n_xtra}, sa_versions={n_sa}, sb_params={n_sb})")
     print(f"   edge types: {types}")
     print(f"   forked(outdeg>=2): {len(forked)}")
     print(f"   |relevant| set: {sorted({len(e['relevant']) for e in episodes})}")
     print(f"   multi-source queries: {len(multi)}/{len(episodes)}")
-    print("   NOTE: 干扰项不进任何 relevant 集 —— 它们进候选后会挤占 K 名额，")
-    print("         用于检验 time/task 维能否把'语义相似但应排除'的样本压下去。")
+    print("   NOTE: S-A/S-B 场景的主指标是 MRR/nDCG（|relevant|=1，recall@8 无区分度）；")
+    print("         干扰项不进任何 relevant 集。")
 
 
 if __name__ == "__main__":

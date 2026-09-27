@@ -184,6 +184,18 @@ def compare(a: dict, b: dict, key: str) -> float | None:
     return None
 
 
+def aggregate_by_scene(rows: list[dict]) -> dict:
+    """按场景分组聚合（E1：S-A 考 time / S-B 考 task / fact 为事实型基线）。
+
+    为什么要分组：总平均会把"组件在特定场景的增益"稀释掉——
+    time/task 维只在对应场景有发挥空间，混在一起看等于白做。
+    """
+    out: dict[str, dict] = {}
+    for sc in sorted({r.get("scene", "fact") for r in rows}):
+        out[sc] = aggregate([r for r in rows if r.get("scene", "fact") == sc])
+    return out
+
+
 def judge(group_summaries: dict[str, dict]) -> dict:
     """自动判据（优化方案 §6.5）。返回 {criterion: {value, pass, note}}。"""
     g = group_summaries

@@ -183,6 +183,7 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
                 "llm_calls": res.llm_calls,
                 "embed_calls_miss": res.embed_calls_miss,
                 "perf_tier": res.perf_tier,
+                "scene": ep.get("scene", "fact"),
                 "latency_ms": round(lat, 2),
                 "internal_latency_ms": res.latency_ms.get("total", 0.0),
             })
@@ -208,7 +209,7 @@ def main() -> None:
     ap.add_argument("--out", default="data/runs/graph_ablation_summary.json")
     args = ap.parse_args()
 
-    from .graph_metrics import aggregate, judge
+    from .graph_metrics import aggregate, aggregate_by_scene, judge
 
     load_dotenv_simple()
     offline = not args.real
@@ -256,6 +257,8 @@ def main() -> None:
                 print(f"   oracle FAIL: {repr(e)[:120]}")
         all_rows.extend(rows)
         summaries[gf.stem] = aggregate(rows)
+        # E1：按场景分组（time/task 增益只在其对应场景可测，总平均会被稀释）
+        summaries[gf.stem]["by_scene"] = aggregate_by_scene(rows)
         s = summaries[gf.stem]
         print(f"    recall={s['avg_recall_kept']} ceil={s['avg_ceiling']} "
               f"norm={s['avg_recall_norm']} src_hit={s['avg_source_hit_rate']} "
@@ -263,6 +266,9 @@ def main() -> None:
               f"(multi-subset={s['avg_multi_source_ratio_multi']}) "
               f"mrr={s['avg_mrr']} ndcg={s['avg_ndcg_at_k']} "
               f"kept={s['avg_kept']} p90={s['p90_latency_ms']}ms llm={s['avg_llm_calls']}")
+        for sc, a in s["by_scene"].items():
+            print(f"      [{sc:>8s}] n={a['n_episodes']:<3d} recall={a['avg_recall_kept']} "
+                  f"mrr={a['avg_mrr']} ndcg={a['avg_ndcg_at_k']}")
 
     # ---- 落盘 ----
     runs_dir = ROOT / "data/runs"
