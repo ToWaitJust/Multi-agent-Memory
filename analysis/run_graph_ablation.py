@@ -94,9 +94,9 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
     from srtp_memory.condition import ConditionKey
     from srtp_memory.middleware import MemorySchedulingMiddleware
 
-    from .graph_metrics import (ceiling, cross_source_relevance, dedup_rate,
-                               mrr, multi_source_ratio, ndcg_at_k, recall_at_kept,
-                               recall_normalized, source_hit_rate)
+    from .graph_metrics import (cand_hit_rate, ceiling, cross_source_relevance,
+                               dedup_rate, mrr, multi_source_ratio, ndcg_at_k,
+                               recall_at_kept, recall_normalized, source_hit_rate)
 
     cfg = SchedulingConfig.load(cfg_path)
     cfg.embedding_cache_dir = cache_dir
@@ -153,6 +153,7 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
             lat = (time.time() - t0) * 1000
 
             kept_ids = [m.memory_id for m in res.kept]
+            cand_ids = [c.memory_id for c in res.candidates]
             kept_owners = [getattr(m, "owner_node", "main") for m in res.kept]
             selected = [s["node_id"] for s in res.sources]
             rel = ep["relevant"]
@@ -167,6 +168,7 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
                 "recall_kept": round(r, 6),
                 "ceiling": round(ceil, 6),
                 "recall_norm": recall_normalized(r, ceil),
+                "cand_hit_rate": cand_hit_rate(cand_ids, rel),
                 "mrr": mrr(kept_ids, rel),
                 "ndcg_at_k": ndcg_at_k(kept_ids, rel, injection_cap),
                 "source_hit_rate": source_hit_rate(selected, ep["relevant_sources"]),

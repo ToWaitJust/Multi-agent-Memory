@@ -467,7 +467,46 @@ SB_PARAMS: list[dict] = [
      "cur_node": "n_retrieval"},
 ]
 
+# ── S-C 链式依赖场景（考图选源 vs 语义检索，E2）─────────────────────────────
+# 设计：查询只提"目标模块的任务"，relevant 分散在 **1 跳上游的多个源池**里，
+#       且相关记忆**不含查询的核心词**（字面不相似）——语义检索即便全池也难命中；
+#       单源（G2）只取最强边源 → 必漏其他源的相关记忆。
+#       主指标：**cand_hit_rate（相关记忆进候选的比例）**——"多对多选源"的直接度量；
+#       MRR/nDCG/recall 作参考（语义排序会把字面不相似的相关记忆排后）。
+SC_QUERIES: list[tuple[str, str, list[str]]] = [
+    # n_deploy 的 1 跳上游：n_demo(0.8 强)、n_config(0.3 弱) —— relevant 跨强弱两源
+    ("n_deploy", "演示服务上线前需要确认哪些前置条件",
+     ["n_demo_m11", "n_demo_m12", "n_config_m1", "n_config_m2"]),
+    # n_paper 的 1 跳上游：n_graph(0.8)、n_dataset(0.8)、n_metrics(0.5) —— 三源
+    ("n_paper", "论文写作前需要梳理哪些实验证据",
+     ["n_graph_m5", "n_dataset_m13", "n_metrics_m15", "n_metrics_m11"]),
+    # n_feedback 的 1 跳上游：仅 n_weights(0.8) —— 单源对照组（G2 不吃亏）
+    ("n_feedback", "反馈闭环实现前要确认哪些机制约束",
+     ["n_weights_m2", "n_weights_m8", "n_weights_m16"]),
+]
+
+# ── S-F 源池不均场景（考强度配额 vs 均匀配额，E2）───────────────────────────
+# 设计原则（涂总：正确的模式应被坚持，须给它公平的检验场景）：
+#   相关记忆集中在 **强边源**（depends_on 0.8），弱边源（similar_to 0.3）里塞入
+#   **与查询高度相似**的干扰记忆（下方 SF_DISTRACTORS，task_tag=research）。
+#   预测：均匀配额（G3）给弱边源同等名额 → 高相似干扰挤进 kept；
+#         强度配额（G4）把名额让给强边源 → relevant 进 kept。
+#   若 G4 在此场景仍不占优，才可下"强度配额无价值"的结论。
+SF_DISTRACTORS: list[tuple[str, str]] = [
+    # (owner=弱边源, 文本) —— 文本与 SF 查询高度相似，但内容是"示例/口径"而非机制
+    ("n_config", "演示画布示例：共享池上限在演示环境取六条"),
+    ("n_deploy", "论文素材示例：共享池容量在论文配图取十二条"),
+]
+SF_QUERIES: list[tuple[str, str, list[str], str]] = [
+    # (cur_node, 查询, relevant(强边源), 干扰来源说明)
+    ("n_deploy", "演示的会话画布怎么画记忆调度",
+     ["n_demo_m1", "n_demo_m11", "n_demo_m12"], "干扰挂弱边源 n_config"),
+    ("n_paper", "论文里共享池的演进怎么表述",
+     ["n_graph_m19", "n_graph_m15", "n_graph_m6"], "干扰挂弱边源 n_deploy"),
+]
+
 # ── 查询表（人工标注 ground truth，与边强度独立）─────────────────────────────
+# 注：S-C/S-F 场景查询见下方 SC_QUERIES / SF_QUERIES（relevant 须为 1 跳上游池内记忆）。
 # (当前节点, 查询, [相关记忆 id])。多源查询 = 相关记忆跨 >=2 个上游源。
 QUERIES: list[tuple[str, str, list[str]]] = [
     # ——— 单源 ———
@@ -615,6 +654,20 @@ def build_graph_payload() -> tuple[list[dict], list[dict]]:
                 "param": pi,
             })
 
+    # E. S-F 高相似干扰（挂在弱边源，考强度配额 vs 均匀配额）。
+    for k, (owner, text) in enumerate(SF_DISTRACTORS, 1):
+        if owner not in node_idx:
+            raise ValueError(f"S-F 干扰项 owner 未知: {owner}")
+        ni = node_idx[owner]
+        corpus.append({
+            "memory_id": f"{owner}_sf{k}",
+            "text": text,
+            "task_tag": TASK_TAG,
+            "owner_node": owner,
+            "timestamp": TIME_BASE + ni * NODE_SPAN_H * HOUR + 2.0 * HOUR,
+            "kind": "sf_distractor",
+        })
+
     nodes = [{"node_id": m["id"], "topic": m["topic"],
               "summary": f"{m['topic']}：" + "；".join(m["mems"][:8])} for m in MODULES]
     return nodes, corpus
@@ -702,6 +755,58 @@ def main() -> None:
             "relevant_sources": [pm["owner"]],
             "scene": "SB_task",
         })
+    # E2 场景：S-C 链式依赖（考图选源 vs 语义检索，主指标 cand_hit_rate）
+    for qi, (cur_node, query, rel_mems) in enumerate(SC_QUERIES, 1):
+        missing = [m for m in rel_mems if m not in by_id]
+        if missing:
+            raise ValueError(f"S-C 查询{qi} 标注引用不存在的记忆: {missing}")
+        rel_sources = sorted({by_id[m]["owner_node"] for m in rel_mems})
+        preds = {s for s, d, _t in EDGES if d == cur_node}
+        bad = [s for s in rel_sources if s not in preds]
+        if bad:
+            raise ValueError(f"S-C 查询{qi} {cur_node} 标注源不在其上游: {bad}")
+        episodes.append({
+            "episode_id": f"sc_{qi:02d}",
+            "task_tag": TASK_TAG,
+            "user_id": "u_tu",
+            "scenario": "multi_module_project",
+            "business": "srtp",
+            "query": query,
+            "cur_node": cur_node,
+            "now": ep_now,
+            "nodes": nodes,
+            "edges": [{"src": s, "dst": d, "type": t} for s, d, t in EDGES],
+            "corpus": corpus,
+            "relevant": sorted(rel_mems),        # 跨多源、字面不相似
+            "relevant_sources": rel_sources,
+            "scene": "SC_chain",
+        })
+    # E2 场景：S-F 源池不均（考强度配额 vs 均匀配额）
+    for qi, (cur_node, query, rel_mems, _note) in enumerate(SF_QUERIES, 1):
+        missing = [m for m in rel_mems if m not in by_id]
+        if missing:
+            raise ValueError(f"S-F 查询{qi} 标注引用不存在的记忆: {missing}")
+        rel_sources = sorted({by_id[m]["owner_node"] for m in rel_mems})
+        preds = {s for s, d, _t in EDGES if d == cur_node}
+        bad = [s for s in rel_sources if s not in preds]
+        if bad:
+            raise ValueError(f"S-F 查询{qi} {cur_node} 标注源不在其上游: {bad}")
+        episodes.append({
+            "episode_id": f"sf_{qi:02d}",
+            "task_tag": TASK_TAG,
+            "user_id": "u_tu",
+            "scenario": "multi_module_project",
+            "business": "srtp",
+            "query": query,
+            "cur_node": cur_node,
+            "now": ep_now,
+            "nodes": nodes,
+            "edges": [{"src": s, "dst": d, "type": t} for s, d, t in EDGES],
+            "corpus": corpus,
+            "relevant": sorted(rel_mems),        # 集中在强边源；弱边源有高相似干扰
+            "relevant_sources": rel_sources,
+            "scene": "SF_skew",
+        })
 
     out = ROOT / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -718,18 +823,20 @@ def main() -> None:
     n_xtra = sum(1 for c in corpus if c.get("kind") == "cross_task")
     n_sa = sum(1 for c in corpus if c.get("kind") == "sa_version")
     n_sb = sum(1 for c in corpus if c.get("kind") == "sb_param")
+    n_sf = sum(1 for c in corpus if c.get("kind") == "sf_distractor")
     scenes: dict[str, int] = {}
     for e in episodes:
         scenes[e["scene"]] = scenes.get(e["scene"], 0) + 1
     print(f"OK {out}  ({len(episodes)} episodes, scenes={scenes})")
     print(f"   nodes={len(node_ids)} edges={len(EDGES)} memories={len(corpus)} "
-          f"(core=280, stale={n_stale}, cross_task={n_xtra}, sa_versions={n_sa}, sb_params={n_sb})")
+          f"(core=280, stale={n_stale}, cross_task={n_xtra}, "
+          f"sa={n_sa}, sb={n_sb}, sf_distract={n_sf})")
     print(f"   edge types: {types}")
     print(f"   forked(outdeg>=2): {len(forked)}")
     print(f"   |relevant| set: {sorted({len(e['relevant']) for e in episodes})}")
     print(f"   multi-source queries: {len(multi)}/{len(episodes)}")
-    print("   NOTE: S-A/S-B 场景的主指标是 MRR/nDCG（|relevant|=1，recall@8 无区分度）；")
-    print("         干扰项不进任何 relevant 集。")
+    print("   NOTE: S-A/S-B 主指标 MRR/nDCG；S-C 主指标 cand_hit_rate（图选源价值）；")
+    print("         S-F 检验强度配额 vs 均匀配额（源池不均场景）。")
 
 
 if __name__ == "__main__":

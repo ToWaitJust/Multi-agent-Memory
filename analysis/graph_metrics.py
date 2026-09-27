@@ -84,6 +84,18 @@ def dedup_rate(n_after: int, n_before: int) -> float:
 # ---------------------------------------------------------------------------
 
 
+def cand_hit_rate(candidate_ids: list[str], relevant: list[str]) -> float:
+    """候选命中率：相关记忆进候选池的比例（S-C 场景主指标）。
+
+    这是"多对多选源"的**直接度量**：图选源的价值 = 把语义检索够不着的
+    记忆（字面不相似、分散多源）送进候选池。候选都没进，后面排序再好也无用。
+    """
+    rel = set(relevant)
+    if not rel:
+        return 0.0
+    return len(rel & set(candidate_ids)) / len(rel)
+
+
 def mrr(kept_ids: list[str], relevant: list[str]) -> float:
     """平均倒数排名：kept 中第一条相关记忆排名的倒数；kept 内无相关 → 0。"""
     rel = set(relevant)
@@ -139,6 +151,7 @@ def aggregate(rows: list[dict]) -> dict:
         "avg_recall_kept": avg("recall_kept"),
         "avg_ceiling": avg("ceiling"),
         "avg_recall_norm": avg("recall_norm"),
+        "avg_cand_hit_rate": avg("cand_hit_rate"),
         "avg_mrr": avg("mrr"),
         "avg_ndcg_at_k": avg("ndcg_at_k"),
         "avg_source_hit_rate": nanavg("source_hit_rate"),
