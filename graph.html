@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SRTP · 图拓扑视图（会话关联图）</title>
+<style>
+:root{--bg:#f4f7f5;--card:#ffffff;--ink:#1e293b;--sub:#64748b;--line:#dbe4de;
+      --green:#0f9d76;--blue:#378add;--orange:#e08a3c;--gray:#94a3b8;--hl:#0f9d76}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
+  font:14px/1.6 "PingFang SC","Microsoft YaHei",sans-serif}
+header{display:flex;align-items:center;gap:14px;height:54px;padding:0 20px;background:var(--card);
+  border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden}
+header h1{font-size:15px;margin:0;font-weight:600}
+header .back{color:var(--green);text-decoration:none;font-size:13px;flex:none}
+.legend{margin-left:auto;display:flex;gap:13px;font-size:12px;color:var(--sub);overflow:hidden;flex-wrap:nowrap}
+.sw{display:inline-block;width:18px;height:3px;border-radius:2px;margin-right:4px;vertical-align:3px}
+.sw.dash{height:0;border-top:2px dashed #94a3b8;background:none!important}
+/* 主体：左图 + 右详情 */
+.main{display:flex;height:calc(100vh - 54px)}
+.stagewrap{position:relative;flex:1;min-width:0}
+.stage{position:absolute;inset:0;overflow:auto}
+.stage::-webkit-scrollbar{height:9px;width:9px}
+.stage::-webkit-scrollbar-thumb{background:#c9d6cf;border-radius:5px}
+#cv{display:block}
+/* 节点卡片 */
+.node{cursor:pointer}
+.node rect{transition:stroke-width .12s,filter .12s}
+.node:hover rect{stroke-width:2.2}
+.node.sel rect{stroke:var(--hl);stroke-width:2.6;filter:drop-shadow(0 0 8px rgba(15,157,118,.55))}
+.node.up rect{stroke:#2b6cb0;stroke-width:2.2}
+.node.dim{opacity:.32}
+.nname{font-size:12px;font-weight:600;fill:#1e293b;pointer-events:none}
+.nmeta{font-size:10px;fill:#8aa39a;pointer-events:none}
+.nbadge{font-size:10px;fill:#fff;pointer-events:none}
+/* 边 */
+.edge{fill:none;transition:opacity .14s}
+.edge.dim{opacity:.1}
+.edge.hot{opacity:1}
+.ebadge{font-size:9.5px;fill:#476b5d;font-weight:600;pointer-events:none;
+        paint-order:stroke;stroke:#f4f7f5;stroke-width:2.6px}
+/* 层级标签 */
+.lvl{font-size:11px;fill:#9db3aa;font-weight:600}
+/* 右侧详情面板 */
+.panel{width:300px;flex:none;background:var(--card);border-left:1px solid var(--line);
+  padding:16px 18px;overflow:auto}
+.panel h2{font-size:13px;margin:0 0 4px}
+.panel .topic{font-size:15px;font-weight:600;margin:0 0 8px}
+.panel .meta{font-size:11.5px;color:var(--sub);margin-bottom:10px}
+.panel .summary{font-size:12px;color:#334155;background:#f7faf8;border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;margin-bottom:12px;max-height:120px;overflow:auto}
+.panel h3{font-size:12px;margin:12px 0 6px;color:var(--sub);font-weight:600}
+.elist{font-size:11.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.etype{font-size:10px;padding:1px 6px;border-radius:4px;color:#fff;flex:none}
+.bar{height:5px;border-radius:3px;background:#e3ece7;flex:1;min-width:40px}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--blue)}
+.empty{font-size:12px;color:var(--sub)}
+/* 浮层提示 */
+.floattip{position:absolute;left:12px;bottom:10px;background:rgba(255,255,255,.94);
+  border:1px solid var(--line);border-radius:8px;padding:4px 12px;font-size:11px;
+  color:var(--sub);pointer-events:none;z-index:5}
+#tip{position:fixed;background:#1e293b;color:#fff;font-size:11.5px;border-radius:6px;
+  padding:6px 10px;pointer-events:none;opacity:0;transition:opacity .12s;max-width:300px;z-index:20;line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← 返回控制台</a>
+  <a class="back" href="/canvas">会话画布</a>
+  <h1>图拓扑视图 · 会话关联图</h1>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--blue)"></i>depends_on</span>
+    <span><i class="sw" style="background:var(--green)"></i>derives_from</span>
+    <span><i class="sw" style="background:var(--orange)"></i>references</span>
+    <span><i class="sw" style="background:var(--gray)"></i>similar_to</span>
+    <span><i class="sw dash"></i>虚线 = 成环被降级</span>
+    <span>线宽 = 边强度</span>
+  </div>
+</header>
+
+<div class="main">
+  <div class="stagewrap">
+    <div class="stage" id="stage">
+      <svg id="cv" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <div class="floattip" id="floattip">节点 = 一次主题会话 · 箭头方向「被依赖方 → 依赖方」 · 点击节点看它的上游源与详情</div>
+  </div>
+  <aside class="panel" id="panel"><div class="empty">点击左侧任一节点查看详情</div></aside>
+</div>
+
+<div id="tip"></div>
+
+<script>
+const SVGNS = "http://www.w3.org/2000/svg";
+const TYPE_COLOR = {depends_on:"#378add", derives_from:"#0f9d76", references:"#e08a3c", similar_to:"#94a3b8"};
+const TYPE_LABEL = {depends_on:"依赖", derives_from:"派生", references:"引用", similar_to:"相近"};
+const NODE_W = 156, NODE_H = 50, GAP_X = 230, GAP_Y = 66, PAD = 44;
+const svg = document.getElementById("cv"), tip = document.getElementById("tip");
+let G = {nodes:[], edges:[]}, POS = {}, SEL = null;
+
+function el(tag, attrs){const e=document.createElementNS(SVGNS,tag);
+  for(const k in attrs||{}) e.setAttribute(k, attrs[k]); return e;}
+
+/* ---------- DAG 分层布局（层号 = 最长上游路径长度） ---------- */
+function layout(nodes, edges){
+  const ids = nodes.map(n=>n.node_id);
+  const act = edges.filter(e=>e.status!=="cycle_rejected");
+  const indeg={}, adj={}, lvl={};
+  ids.forEach(i=>{indeg[i]=0;adj[i]=[];lvl[i]=0;});
+  act.forEach(e=>{ if(adj[e.src]&&indeg[e.dst]!==undefined){adj[e.src].push(e.dst); indeg[e.dst]++;}});
+  // Kahn 逐层剥离，同时推进层级
+  const q = ids.filter(i=>indeg[i]===0); let seen=0;
+  while(q.length){ const cur=q.shift(); seen++;
+    adj[cur].forEach(nxt=>{ lvl[nxt]=Math.max(lvl[nxt], lvl[cur]+1);
+      if(--indeg[nxt]===0) q.push(nxt); });
+  }
+  if(seen<ids.length){ // 有环（理论上已被环检测降级，兜底）
+    ids.forEach(i=>{ if(!lvl[i]) lvl[i]=0; });
+  }
+  // 同层内按创建时间排序
+  const byLvl={};
+  ids.forEach(i=>{(byLvl[lvl[i]]=byLvl[lvl[i]]||[]).push(i);});
+  Object.values(byLvl).forEach(arr=>arr.sort((a,b)=>{
+    const na=nodes.find(n=>n.node_id===a)||{}, nb=nodes.find(n=>n.node_id===b)||{};
+    return (na.created_at||0)-(nb.created_at||0);
+  }));
+  // 坐标
+  const pos={};
+  Object.keys(byLvl).sort((a,b)=>a-b).forEach(L=>{
+    byLvl[L].forEach((id,row)=>{ pos[id]={x:PAD+L*GAP_X, y:PAD+row*GAP_Y, lvl:+L}; });
+  });
+  return pos;
+}
+
+/* ---------- 绘制 ---------- */
+function draw(){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  const ids = G.nodes.map(n=>n.node_id);
+  POS = layout(G.nodes, G.edges);
+  const maxX = Math.max(...ids.map(i=>POS[i]?POS[i].x:0)) + NODE_W + PAD;
+  const maxY = Math.max(...ids.map(i=>POS[i]?POS[i].y:0)) + NODE_H + PAD;
+  svg.setAttribute("width", Math.max(maxX, 640)); svg.setAttribute("height", Math.max(maxY, 420));
+  svg.setAttribute("viewBox", `0 0 ${Math.max(maxX,640)} ${Math.max(maxY,420)}`);
+
+  // 层级标签
+  const lvls=[...new Set(ids.map(i=>POS[i]&&POS[i].lvl))].sort((a,b)=>a-b);
+  lvls.forEach(L=>{
+    const t=el("text",{x:PAD+L*GAP_X, y:16, class:"lvl"}); t.textContent="L"+L; svg.appendChild(t);
+  });
+
+  // 箭头 marker（每类边一个颜色）
+  const defs=el("defs",{});
+  Object.keys(TYPE_COLOR).forEach(t=>{
+    const m=el("marker",{id:"ar_"+t, viewBox:"0 0 10 10", refX:"9", refY:"5",
+      markerWidth:"6", markerHeight:"6", orient:"auto-start-reverse"});
+    m.appendChild(el("path",{d:"M0,0 L10,5 L0,10 z", fill:TYPE_COLOR[t]}));
+    defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+
+  // 边
+  const gE=el("g",{});
+  G.edges.forEach(e=>{
+    if(POS[e.src]==null||POS[e.dst]==null) return;
+    const rejected = e.status==="cycle_rejected";
+    const a=POS[e.src], b=POS[e.dst];
+    const x1=a.x+NODE_W, y1=a.y+NODE_H/2, x2=b.x, y2=b.y+NODE_H/2;
+    const mx=(x1+x2)/2;
+    const p=el("path",{d:`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`,
+      class:"edge", stroke:TYPE_COLOR[e.type]||"#94a3b8",
+      "stroke-width": rejected?1.2:(1+5*(e.strength||0.5)),
+      "stroke-dasharray": rejected?"5 4":null,
+      "marker-end": rejected?null:`url(#ar_${e.type})`,
+      opacity: rejected?.5:.78});
+    p.addEventListener("mouseover", ev=>showTip(ev, e));
+    p.addEventListener("mousemove", ev=>moveTip(ev));
+    p.addEventListener("mouseout", hideTip);
+    gE.appendChild(p);
+  });
+  svg.appendChild(gE);
+
+  // 节点
+  const gN=el("g",{});
+  G.nodes.forEach(n=>{
+    const p=POS[n.node_id]; if(!p) return;
+    const nm=n.n_memories||0;
+    const w = nm>=24?NODE_W+16 : (nm>=12?NODE_W : NODE_W-14);
+    const g=el("g",{class:"node", "data-id":n.node_id});
+    g.appendChild(el("rect",{x:p.x, y:p.y, width:w, height:NODE_H, rx:9,
+      fill:"#fff", stroke:"#cfdcd6", "stroke-width":1.2}));
+    // 记忆数徽标
+    if(nm>0){
+      g.appendChild(el("rect",{x:p.x+w-30, y:p.y+8, width:22, height:14, rx:7, fill:"#e1f5ee"}));
+      const bt=el("text",{x:p.x+w-19, y:p.y+18.5, class:"nbadge", fill:"#0c5c49",
+        "text-anchor":"middle"}); bt.textContent=nm; g.appendChild(bt);
+    }
+    const t1=el("text",{x:p.x+11, y:p.y+20, class:"nname"});
+    t1.textContent=(n.topic||n.node_id).slice(0,11); g.appendChild(t1);
+    const t2=el("text",{x:p.x+11, y:p.y+37, class:"nmeta"});
+    t2.textContent=n.node_id; g.appendChild(t2);
+    g.addEventListener("click",()=>select(n.node_id));
+    gN.appendChild(g);
+  });
+  svg.appendChild(gN);
+}
+
+/* ---------- 选中与高亮 ---------- */
+function select(id){
+  SEL=id;
+  const ups = G.edges.filter(e=>e.dst===id && e.status!=="cycle_rejected").map(e=>e.src);
+  const downs = G.edges.filter(e=>e.src===id && e.status!=="cycle_rejected").map(e=>e.dst);
+  const near = new Set([id,...ups,...downs]);
+  document.querySelectorAll(".node").forEach(g=>{
+    const nid=g.getAttribute("data-id");
+    g.classList.toggle("sel", nid===id);
+    g.classList.toggle("up", ups.includes(nid));
+    g.classList.toggle("dim", !near.has(nid));
+  });
+  document.querySelectorAll(".edge").forEach((p,i)=>{
+    const e=G.edges[i]; if(!e) return;
+    p.classList.toggle("dim", !(e.src===id||e.dst===id));
+    p.classList.toggle("hot", (e.src===id||e.dst===id));
+  });
+  renderPanel(id, ups, downs);
+}
+
+function renderPanel(id, ups, downs){
+  const n=G.nodes.find(x=>x.node_id===id)||{};
+  const box=document.getElementById("panel");
+  const edgeRow=(e,dir)=>{
+    const w=Math.round((e.strength||0)*100);
+    return `<div class="elist">
+      <span class="etype" style="background:${TYPE_COLOR[e.type]||'#94a3b8'}">${TYPE_LABEL[e.type]||e.type}</span>
+      <span>${dir==="in"?"← 源":"→ 下游"} <b>${dir==="in"?e.src:e.dst}</b></span>
+      <span class="bar"><i style="width:${w}%"></i></span>
+      <span>${(e.strength||0).toFixed(2)}</span></div>`;
+  };
+  const ins=G.edges.filter(e=>e.dst===id), outs=G.edges.filter(e=>e.src===id);
+  box.innerHTML=`
+    <h2>节点详情</h2>
+    <div class="topic">${n.topic||id}</div>
+    <div class="meta">${n.node_id} · 第 ${(POS[id]&&POS[id].lvl+1)||'?'} 层 · 记忆 ${n.n_memories||0} 条</div>
+    ${n.summary?`<div class="summary">${n.summary}</div>`:''}
+    <h3>上游源节点（${ins.filter(e=>e.status!=="cycle_rejected").length}）</h3>
+    ${ins.length?ins.map(e=>edgeRow(e,"in")).join(''):'<div class="empty">无上游（图根）</div>'}
+    <h3>下游依赖方（${outs.filter(e=>e.status!=="cycle_rejected").length}）</h3>
+    ${outs.length?outs.map(e=>edgeRow(e,"out")).join(''):'<div class="empty">无下游</div>'}
+  `;
+}
+
+/* ---------- 边浮层 ---------- */
+function showTip(ev,e){
+  tip.innerHTML=`<b>${e.src} → ${e.dst}</b><br>${TYPE_LABEL[e.type]||e.type} · 强度 ${(e.strength||0).toFixed(2)}`
+    + (e.similarity?` · 相似度 ${e.similarity.toFixed(3)}`:'')
+    + (e.evidence?`<br><span style="opacity:.8">${e.evidence.slice(0,90)}</span>`:'');
+  tip.style.opacity="1"; moveTip(ev);
+}
+function moveTip(ev){tip.style.left=(ev.clientX+14)+"px"; tip.style.top=(ev.clientY+14)+"px";}
+function hideTip(){tip.style.opacity="0";}
+
+/* ---------- 载入 ---------- */
+async function boot(){
+  const r=await fetch("/api/graph").then(x=>x.json());
+  if(!r.ok||!r.graph){document.getElementById("panel").innerHTML=`<div class="empty">载入失败</div>`;return;}
+  G=r.graph;
+  if(!G.nodes.length){
+    document.getElementById("floattip").textContent="暂无图数据：先在控制台发起一轮会话（或跑一次消融）后刷新";
+  }
+  draw();
+  const st=document.getElementById("floattip");
+  st.textContent += `　|　数据来源：${G.source==="runtime"?"演示运行时图":"消融数据集固定图"}　|　节点 ${G.nodes.length} · 边 ${G.edges.length}`;
+}
+boot();
+</script>
+</body>
+</html>

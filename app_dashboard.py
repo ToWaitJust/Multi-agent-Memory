@@ -404,6 +404,72 @@ def _run_smoke() -> dict:
     }
 
 
+#: typed 边 → 默认强度（边数据缺 strength 字段时的兜底，例如来自数据集的固定图）
+_EDGE_DEFAULT_STRENGTH = {
+    "derives_from": 0.9, "depends_on": 0.8, "references": 0.5, "similar_to": 0.3,
+}
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    out: list[dict] = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    out.append(json.loads(line))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return out
+
+
+def _graph_payload(user: str = "u_tu") -> dict:
+    """组装图拓扑视图的数据。
+
+    数据来源（优先运行时，回退数据集）：
+      1. 演示服务运行时持久化的图 `data/graph/<user>/{nodes,edges}.jsonl`；
+      2. 不存在时回退到消融数据集 `data/graph_dataset.jsonl` 首集里的**固定图**
+         —— 没跑过演示服务时页面也能看到真实的 14 节点 / 21 边 DAG（图是消融的常量，
+         可视化它同样有说服力）。
+
+    归一化：剔除 emb（1024 维向量不进 JSON）；补 strength/status 默认值；
+    数据集来源时按 corpus 统计每个节点的记忆条数。
+    """
+    gd = ROOT / "data" / "graph" / user
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    source = "empty"
+    if (gd / "nodes.jsonl").exists():
+        nodes = _read_jsonl(gd / "nodes.jsonl")
+        edges = _read_jsonl(gd / "edges.jsonl")
+        source = "runtime"
+    else:
+        ds = ROOT / "data" / "graph_dataset.jsonl"
+        if ds.exists():
+            try:
+                with open(ds, encoding="utf-8") as f:
+                    first = json.loads(f.readline())
+                nodes = list(first.get("nodes") or [])
+                edges = list(first.get("edges") or [])
+                counts: dict[str, int] = {}
+                for m in first.get("corpus") or []:
+                    counts[m["owner_node"]] = counts.get(m["owner_node"], 0) + 1
+                for n in nodes:
+                    n.setdefault("n_memories", counts.get(n.get("node_id", ""), 0))
+                source = "dataset"
+            except (OSError, json.JSONDecodeError, KeyError):
+                nodes, edges, source = [], [], "empty"
+
+    for n in nodes:
+        n.pop("emb", None)
+    for e in edges:
+        e.setdefault("status", "active")
+        if e.get("strength") is None:
+            e["strength"] = _EDGE_DEFAULT_STRENGTH.get(e.get("type"), 0.5)
+    return {"nodes": nodes, "edges": edges, "source": source,
+            "types": list(_EDGE_DEFAULT_STRENGTH.keys())}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, body: bytes, ctype: str) -> None:
         self.send_response(code)
@@ -426,6 +492,18 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/canvas":
             html = (ROOT / "canvas.html").read_text(encoding="utf-8")
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+        elif p == "/graph":
+            html = (ROOT / "graph.html").read_text(encoding="utf-8")
+            self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+        elif p == "/api/graph":
+            try:
+                body = json.dumps({"ok": True, "graph": _graph_payload()},
+                                  ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as e:  # noqa: BLE001
+                self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
         elif p == "/api/canvas/history":
             try:
                 history = demo_canvas.load_or_create()
