@@ -102,6 +102,7 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
     cfg = SchedulingConfig.load(cfg_path)
     cfg.embedding_cache_dir = cache_dir
     cfg.max_shared = injection_cap        # 注入上限可覆盖（配额是否 binding 的敏感性探针）
+    cfg.top_k = injection_cap             # 同步固定 K 选择器的 top_k，否则配额仍按旧 K 分配
     if semantic_floor is not None:        # S0 修复参数的单变量覆盖（免新增 YAML）
         cfg.attention_semantic_floor = float(semantic_floor)
     if not cfg.graph.enabled:
