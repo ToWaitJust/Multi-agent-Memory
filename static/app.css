@@ -71,7 +71,9 @@ a:hover{color:var(--brand-d)}
   background:rgba(255,255,255,.94);backdrop-filter:blur(6px);border:1px solid var(--line);
   border-radius:var(--r);padding:7px 13px;font-size:11.5px;color:var(--sub);line-height:1.65;
   box-shadow:var(--shadow-2);pointer-events:none}
-.legend{position:absolute;right:14px;top:12px;z-index:5;background:rgba(255,255,255,.94);
+/* 注意：命名为 map-legend 而非 legend —— 控制台/画布两页也有自己的 .legend
+   （页面内图例），通用类名会互相污染（实测导致控制台图例被绝对定位盖到画布上）。 */
+.map-legend{position:absolute;right:14px;top:12px;z-index:5;background:rgba(255,255,255,.94);
   backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:var(--r);
   padding:9px 12px;font-size:11.5px;color:var(--sub);box-shadow:var(--shadow-2);line-height:1.9}
 .legend .sw{display:inline-block;width:16px;height:3px;border-radius:2px;margin-right:6px;

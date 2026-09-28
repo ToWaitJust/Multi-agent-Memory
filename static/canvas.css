@@ -1,0 +1,54 @@
+/* ============================================================================
+   会话画布（canvas）样式 —— 迁移自 canvas.html 内联 <style>
+   与控制台同样策略：保留类名/布局，变量映射到 static/app.css 令牌。
+   ========================================================================== */
+:root{
+  --bg:var(--bg);              /* 画布底色直接用共享浅底 */
+  --card:var(--card);
+  --ink:var(--ink);
+  --sub:var(--sub);
+  --line:var(--line);
+  --green:var(--brand);
+  --green-soft:var(--brand-soft);
+  --blue:var(--blue);
+  --blue-soft:var(--blue-soft);
+  --hl:var(--brand);
+}
+
+:root{--bg:#f4f7f5;--card:#ffffff;--ink:#1e293b;--sub:#64748b;--line:#dbe4de;
+      --green:#0f9d76;--green-soft:#e1f5ee;--blue:#378add;--blue-soft:#e6f1fb;
+      --hl:#0f9d76}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
+  font:14px/1.6 "PingFang SC","Microsoft YaHei",sans-serif}
+header{display:flex;align-items:center;gap:14px;height:54px;padding:0 20px;background:var(--card);
+  border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden}
+header h1{font-size:15px;margin:0;font-weight:600}
+header .back{color:var(--green);text-decoration:none;font-size:13px;flex:none}
+.legend{margin-left:auto;display:flex;gap:16px;font-size:12px;color:var(--sub);overflow:hidden}
+.dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+/* 画布：占满剩余空间，节点可拖拽重排（超宽/超高用滚动条浏览） */
+.stagewrap{position:relative;height:calc(100vh - 54px)}
+.stage{position:absolute;inset:0;overflow:auto}
+.stage::-webkit-scrollbar{height:9px;width:9px}
+.stage::-webkit-scrollbar-thumb{background:#c9d6cf;border-radius:5px}
+#cv{display:block}
+.node{cursor:grab}
+.node rect{transition:stroke-width .12s}
+.node:hover rect{stroke-width:2.2}
+.lane{stroke:#c4d2ca;stroke-width:1.4;fill:none}
+.ml{stroke:#9db3aa;stroke-width:2;fill:none}
+.dl{stroke:#7fa8c9;stroke-width:1.6;fill:none;stroke-dasharray:6 5}
+.lanetag{font-size:11px;font-weight:600;fill:#2b6cb0}
+.maintag{font-size:11px;font-weight:600;fill:#0c5c49}
+.tip{font-size:11px;fill:#8aa39a}
+/* 浮动提示条（固定在画布左下，不随平移） */
+.floattip{position:absolute;left:12px;bottom:10px;background:rgba(255,255,255,.92);
+  border:1px solid var(--line);border-radius:8px;padding:4px 12px;font-size:11px;
+  color:var(--sub);pointer-events:none;z-index:5}
+/* 节点进入控制台时的过渡动画 */
+.node.enter{transform-box:fill-box;transform-origin:center;animation:nodein .42s ease}
+@keyframes nodein{0%{opacity:.35;transform:scale(.9)}55%{opacity:1;transform:scale(1.05)}100%{opacity:1;transform:scale(1)}}
+/* 从控制台返回时的高亮脉冲 */
+.node.hl{transform-box:fill-box;transform-origin:center;animation:nodehl 1.6s ease 2}
+@keyframes nodehl{0%,100%{filter:drop-shadow(0 0 0 rgba(15,157,118,0))}50%{filter:drop-shadow(0 0 10px rgba(15,157,118,.85))}}
+
