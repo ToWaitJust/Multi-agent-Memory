@@ -414,7 +414,7 @@ STALE_VERSIONS: list[tuple[str, str, str]] = [
 CROSS_TASK_ITEMS: list[tuple[str, str, str]] = [
     ("n_deploy", "运维口径：共享池告警阈值设为 12 条", "ops"),
     ("n_deploy", "运维口径：演示服务内存上限 1500M", "ops"),
-    ("n_config", "教学演示口径：阈值示例取 0.5", "teaching"),
+    ("n_attention", "教学演示口径：阈值示例取 0.5", "teaching"),
     ("n_pool", "容量规划口径：共享池预留 15 条", "planning"),
     ("n_embed", "接口兼容口径：维度可回退 768", "compat"),
     ("n_attention", "调参口径：语义头系数曾试 0.4/0.4/0.2", "tuning"),
@@ -435,9 +435,9 @@ SA_CHAINS: list[dict] = [
     {"owner": "n_config", "subject": "日志保留天数",
      "versions": [("第一版", "七天"), ("第二版", "十四天"), ("当前版", "三十天")], "cur": 3,
      "cur_node": "n_embed"},
-    {"owner": "n_config", "subject": "失败重试次数上限",
+    {"owner": "n_retrieval", "subject": "失败重试次数上限",
      "versions": [("第一版", "一次"), ("第二版", "两次"), ("当前版", "三次")], "cur": 3,
-     "cur_node": "n_embed"},
+     "cur_node": "n_attention"},
     {"owner": "n_embed", "subject": "批量编码的批大小",
      "versions": [("第一版", "十六条"), ("第二版", "三十二条"), ("当前版", "六十四条")], "cur": 3,
      "cur_node": "n_retrieval"},
@@ -461,9 +461,9 @@ SB_PARAMS: list[dict] = [
     {"owner": "n_pool", "subject": "共享池的容量上限",
      "values": {"ops": "十二条", "research": "十条", "demo": "六条"}, "q_task": "ops",
      "cur_node": "n_graph"},
-    {"owner": "n_config", "subject": "调度阈值的默认值",
+    {"owner": "n_retrieval", "subject": "调度阈值的默认值",
      "values": {"ops": "0.5", "research": "0.6", "demo": "0.4"}, "q_task": "ops",
-     "cur_node": "n_embed"},
+     "cur_node": "n_attention"},
     {"owner": "n_metrics", "subject": "单条打分的耗时要求",
      "values": {"ops": "五毫秒", "research": "十毫秒", "demo": "二十毫秒"}, "q_task": "ops",
      "cur_node": "n_paper"},
@@ -481,7 +481,7 @@ SB_PARAMS: list[dict] = [
 SC_QUERIES: list[tuple[str, str, list[str]]] = [
     # n_deploy 的 1 跳上游：n_demo(0.8 强)、n_config(0.3 弱) —— relevant 跨强弱两源
     ("n_deploy", "演示服务上线前需要确认哪些前置条件",
-     ["n_demo_m11", "n_demo_m12", "n_config_m1", "n_config_m2"]),
+     ["n_config_m1", "n_config_m2", "n_config_m3", "n_demo_m11", "n_demo_m12"]),
     # n_paper 的 1 跳上游：n_graph(0.8)、n_dataset(0.8)、n_metrics(0.5) —— 三源
     ("n_paper", "论文写作前需要梳理哪些实验证据",
      ["n_graph_m5", "n_dataset_m13", "n_metrics_m15", "n_metrics_m11"]),
@@ -499,7 +499,7 @@ SC_QUERIES: list[tuple[str, str, list[str]]] = [
 #   若 G4 在此场景仍不占优，才可下"强度配额无价值"的结论。
 SF_DISTRACTORS: list[tuple[str, str]] = [
     # (owner=弱边源, 文本) —— 文本与 SF 查询高度相似，但内容是"示例/口径"而非机制
-    ("n_config", "演示画布示例：共享池上限在演示环境取六条"),
+    ("n_config", "会话画布示例：共享池上限在示例环境取六条"),
     ("n_deploy", "论文素材示例：共享池容量在论文配图取十二条"),
 ]
 SF_QUERIES: list[tuple[str, str, list[str], str]] = [
