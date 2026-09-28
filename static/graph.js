@@ -38,8 +38,8 @@
       var nm = n.n_memories || 0;
       els.push({data: {
         id: n.node_id,
-        label: (n.topic || n.node_id),
-        sub: n.node_id,
+        // 两行标签：主题（主）+ node_id（次），避免"只看主题不知道数据键"的信息损失
+        label: (n.topic || n.node_id) + '\n' + n.node_id,
         mem: nm,
         forked: (outDeg[n.node_id] || 0) >= 2,
         kind: 'node',
@@ -64,12 +64,12 @@
 
   var CY_STYLE = [
     {selector:'node', style:{
-      'shape':'round-rectangle', 'width':152, 'height':50,
+      'shape':'round-rectangle', 'width':150, 'height':48,
       'background-color':'#ffffff', 'background-opacity':1,
       'border-width':1.4, 'border-color':'#cfdcd6',
-      'label':'data(label)', 'font-size':12.5, 'font-weight':600, 'color':'#152b23',
-      'text-valign':'center', 'text-halign':'center', 'text-wrap':'ellipsis',
-      'text-max-width':130, 'text-margin-y':-6,
+      'label':'data(label)', 'font-size':11.5, 'font-weight':600, 'color':'#152b23',
+      'text-valign':'center', 'text-halign':'center', 'text-wrap':'wrap',
+      'text-max-width':134, 'line-height':1.3,
       'shadow-blur':14, 'shadow-color':'rgba(16,42,33,.13)',
       'shadow-opacity':0.55, 'shadow-offset-y':3, 'overlay-opacity':0,
       'transition-property':'border-color,border-width,background-color',
@@ -191,7 +191,8 @@
       keep = keep.union(n).union(e);
     });
     cy.elements().difference(keep).addClass('dim');
-    cy.animate({fit:{eles:keep, padding:70}, duration:420});
+    // 不 fit：保持用户当前视野，避免自动缩放到"当前节点+源"的小范围后
+    // 整图变小看不清、失去上下文（用户想聚焦时可点「适应窗口」）。
     renderStagePanel();
   }
 
@@ -313,11 +314,60 @@
   }
 
   /* ---------------- 工具条交互 ---------------- */
+  /* ---------------- 布局：自算 DAG 分层（自左向右） ----------------
+     不用 breadthfirst+旋转的取巧做法（实测 rotate 不生效/被后续 fit 覆盖）：
+     直接按「层号 = 最长上游路径」算坐标 —— 上游在左、下游在右，完全可控。 */
+  function layeredPositions(){
+    var ids = G.nodes.map(function (n) { return n.node_id; });
+    var indeg = {}, adj = {}, lvl = {};
+    ids.forEach(function (i) { indeg[i] = 0; adj[i] = []; lvl[i] = 0; });
+    G.edges.forEach(function (e) {
+      if (e.status === 'cycle_rejected') return;
+      if (adj[e.src] === undefined || indeg[e.dst] === undefined) return;
+      adj[e.src].push(e.dst);
+      indeg[e.dst]++;
+    });
+    // Kahn 逐层剥离：lvl[v] = max(lvl[u] + 1)
+    var q = ids.filter(function (i) { return indeg[i] === 0; });
+    var seen = 0;
+    while (q.length) {
+      var cur = q.shift(); seen++;
+      adj[cur].forEach(function (nxt) {
+        if (lvl[cur] + 1 > lvl[nxt]) lvl[nxt] = lvl[cur] + 1;
+        if (--indeg[nxt] === 0) q.push(nxt);
+      });
+    }
+    // 有环时的兜底（正常图不会走到）
+    if (seen < ids.length) ids.forEach(function (i) { if (lvl[i] === undefined) lvl[i] = 0; });
+    var byLvl = {};
+    ids.forEach(function (i) { (byLvl[lvl[i]] = byLvl[lvl[i]] || []).push(i); });
+    var pos = {}, COL = 138, ROW = 72;
+    Object.keys(byLvl).sort(function (a, b) { return a - b; }).forEach(function (L) {
+      var col = byLvl[L];
+      col.forEach(function (id, r) {
+        // 竖直居中：同一层的节点围绕中线分布，避免长尾层把图拉偏
+        pos[id] = {x: (+L) * COL, y: (r - (col.length - 1) / 2) * ROW};
+      });
+    });
+    return pos;
+  }
+
+  function applyLayered(animate){
+    var pos = layeredPositions();
+    cy.nodes().forEach(function (n) {
+      var p = pos[n.id()];
+      if (p) n.position(p);
+    });
+    var fit = {fit: {eles: cy.elements(), padding: 56}, duration: animate ? 420 : 0};
+    if (animate) cy.animate(fit); else cy.fit(cy.elements(), 56);
+  }
+
   function setLayout(name){
-    var opts = {name: name, padding: 46, animate: true, animationDuration: 380};
-    if (name === 'breadthfirst'){ opts.directed = true; opts.spacingFactor = 1.12; opts.avoidOverlap = true; }
-    if (name === 'circle'){ opts.spacingFactor = 1.3; }
-    if (name === 'grid'){ opts.avoidOverlap = true; }
+    // 分层 = 自算坐标；其余布局交给 Cytoscape 内置
+    if (name === 'breadthfirst'){ applyLayered(true); return; }
+    var opts = {name: name, padding: 52, animate: true, animationDuration: 420};
+    if (name === 'circle') opts.spacingFactor = 1.25;
+    if (name === 'grid') opts.avoidOverlap = true;
     cy.layout(opts).run();
   }
 
@@ -356,26 +406,40 @@
         return;
       }
       initCy();
+      applyLayered(false);       // 自算 DAG 分层（自左向右，上游在左）
       renderDashboard();
       var ft = document.getElementById('ftip');
       ft.textContent = '节点 = 一次主题会话 · 箭头「被依赖方 → 依赖方」· ' +
         '滚轮缩放 / 拖拽平移 / 框选 · 点节点看详情与选源';
+      // ⚠️ 必须先取到 DOM 引用再使用（此前深链代码写在这之前，var 提升导致
+      //    `q` 为 undefined → 抛异常 → 右侧面板变空白，正是"点击后空白"的同类根因）
       var q = document.getElementById('q');
+      var saBtn = document.getElementById('saBtn');
       if (!q.value) q.value = '演示服务上线前需要确认哪些前置条件';
-      document.getElementById('saBtn').addEventListener('click', runStageA);
+      saBtn.addEventListener('click', runStageA);
       q.addEventListener('keydown', function (e) { if (e.key === 'Enter') runStageA(); });
       document.getElementById('fitBtn').addEventListener('click', function () {
-        cy.animate({fit:{padding:46}, duration:320});
+        cy.animate({fit: {eles: cy.elements(), padding: 56}, duration: 320});
       });
       document.querySelectorAll('.seg button').forEach(function (b) {
         b.addEventListener('click', function () {
-          document.querySelectorAll('.seg button').forEach(function (x) {
-            x.classList.remove('on');
-          });
+          document.querySelectorAll('.seg button').forEach(function (x) { x.classList.remove('on'); });
           b.classList.add('on');
           setLayout(b.dataset.layout);
         });
       });
+      // 支持 ?node=<id>&q=<query> 深链：直接落到某节点的选源视图
+      // （既是分享能力，也让无头浏览器可自动化验证选源渲染）
+      var sp = new URLSearchParams(location.search);
+      var qp = sp.get('q'), np = sp.get('node');
+      if (qp) q.value = qp;
+      if (np){
+        select(np);
+        fetchStageA(np).then(function (sa) {
+          if (sa){ SA = sa; paintStageA(); }
+          else { flash('选源未返回结果：请确认后端 /api/stage_a 可用'); }
+        });
+      }
     }).catch(function (e) {
       side.innerHTML = '<div class="empty">载入失败：' + esc(e && e.message) + '</div>';
     });
