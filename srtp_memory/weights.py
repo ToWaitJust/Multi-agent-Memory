@@ -42,12 +42,31 @@ class _ConditionedMLP:
             raise RuntimeError("torch 未安装，无法使用可学习权重（srtp-memory 环境已含 torch）")
         self.conditioning_dims = set(conditioning_dims)
         self.global_dims = [d for d in ["time", "frequency"] if d not in self.conditioning_dims]
-        self._net = nn.Sequential(
-            nn.Linear(query_dim + condition_dim, 64),
-            nn.ReLU(),
-            nn.Linear(64, 4),
-        )
+        self.query_dim = query_dim
+        # 四维固定顺序 [time, semantic, frequency, task]
+        self._global_idx = [0, 2]
+        self._cond_idx = [1, 3]
+        # D-047 修复（E3 切片泄漏）：原实现是单一网络吃 query+condition 拼接输出四维，
+        # 导致 time/frequency 的 logits 也受 condition 影响（结构性泄漏，E3 实测证实）。
+        # 改为双分支：全局支只吃 query（对条件严格不变），条件化支吃 query+condition；
+        # 两支 logits 拼成四维后整体 softmax，保持归一化语义。
+        self._net_global = nn.Sequential(
+            nn.Linear(query_dim, 32), nn.ReLU(), nn.Linear(32, len(self._global_idx)))
+        self._net_cond = nn.Sequential(
+            nn.Linear(query_dim + condition_dim, 64), nn.ReLU(),
+            nn.Linear(64, len(self._cond_idx)))
         self._opt = None
+
+    def _logits4(self, x):
+        """x: (B, query_dim+condition_dim) -> 四维 logits，按 [time,semantic,frequency,task]。"""
+        xq = x[:, :self.query_dim]
+        out = torch.empty(x.shape[0], 4, dtype=x.dtype)
+        out[:, self._global_idx] = self._net_global(xq)
+        out[:, self._cond_idx] = self._net_cond(x)
+        return out
+
+    def _all_params(self):
+        return list(self._net_global.parameters()) + list(self._net_cond.parameters())
 
     @staticmethod
     def _feat_vec(query_emb: np.ndarray, condition_emb: np.ndarray) -> np.ndarray:
@@ -62,7 +81,7 @@ class _ConditionedMLP:
     def forward(self, query_emb: np.ndarray, condition_emb: np.ndarray) -> dict[str, float]:
         x = self._feat_vec(query_emb, condition_emb)
         with torch.no_grad():
-            out = self._net(torch.from_numpy(x))
+            out = self._logits4(torch.from_numpy(x)[None])[0]
             w = torch.softmax(out, dim=-1).numpy()
         # 四维顺序固定 [time, semantic, frequency, task]
         return {"time": float(w[0]), "semantic": float(w[1]),
@@ -73,15 +92,15 @@ class _ConditionedMLP:
         """一步梯度更新，返回 loss。target_w = 四维目标权重（蒸馏标签 / 反馈加权）。"""
         x = self._feat_vec(query_emb, condition_emb)
         t = torch.from_numpy(np.asarray(target_w, dtype=np.float32))
-        self._net.train()
+        self._net_global.train(); self._net_cond.train()
         if self._opt is None:
-            self._opt = torch.optim.Adam(self._net.parameters(), lr=0.01)
+            self._opt = torch.optim.Adam(self._all_params(), lr=0.01)
         self._opt.zero_grad()
-        out = self._net(torch.from_numpy(x))
+        out = self._logits4(torch.from_numpy(x)[None])[0]
         loss = torch.nn.functional.mse_loss(torch.softmax(out, dim=-1), t)
         loss.backward()
         self._opt.step()
-        self._net.eval()
+        self._net_global.eval(); self._net_cond.eval()
         return float(loss.item())
 
     def fit(self, dataset: list, batch_size: int = 16, epochs: int = 20,
@@ -105,8 +124,8 @@ class _ConditionedMLP:
         val_idx = perm_all[:n_val]
         train_idx = perm_all[n_val:]
 
-        self._net.train()
-        opt = torch.optim.Adam(self._net.parameters(), lr=lr, weight_decay=weight_decay)
+        self._net_global.train(); self._net_cond.train()
+        opt = torch.optim.Adam(self._all_params(), lr=lr, weight_decay=weight_decay)
         history = []
         for ep in range(epochs):
             perm = rng.permutation(len(train_idx))
@@ -116,16 +135,16 @@ class _ConditionedMLP:
                 xb = torch.from_numpy(X[b])
                 yb = torch.from_numpy(Y[b])
                 opt.zero_grad()
-                out = self._net(xb)
+                out = self._logits4(xb)
                 loss = torch.nn.functional.mse_loss(torch.softmax(out, dim=-1), yb)
                 loss.backward()
                 opt.step()
                 train_losses.append(loss.item())
-            self._net.eval()
+            self._net_global.eval(); self._net_cond.eval()
             val_loss = None
             if n_val > 0:
                 with torch.no_grad():
-                    vout = self._net(torch.from_numpy(X[val_idx]))
+                    vout = self._logits4(torch.from_numpy(X[val_idx]))
                     val_loss = torch.nn.functional.mse_loss(
                         torch.softmax(vout, dim=-1), torch.from_numpy(Y[val_idx])).item()
             history.append({
@@ -133,8 +152,8 @@ class _ConditionedMLP:
                 "train_loss": float(np.mean(train_losses)) if train_losses else 0.0,
                 "val_loss": val_loss,
             })
-            self._net.train()
-        self._net.eval()
+            self._net_global.train(); self._net_cond.train()
+        self._net_global.eval(); self._net_cond.eval()
         return {
             "history": history,
             "final_train_loss": history[-1]["train_loss"],
@@ -143,11 +162,14 @@ class _ConditionedMLP:
 
     def save(self, path: str) -> None:
         """持久化 MLP 权重（state_dict）。训练产物落盘，供推理加载。"""
-        torch.save(self._net.state_dict(), path)
+        torch.save({"global": self._net_global.state_dict(),
+                    "cond": self._net_cond.state_dict()}, path)
 
     def load(self, path: str) -> None:
         """从 state_dict 载入 MLP 权重。"""
-        self._net.load_state_dict(torch.load(path, map_location="cpu"))
+        sd = torch.load(path, map_location="cpu")
+        self._net_global.load_state_dict(sd["global"])
+        self._net_cond.load_state_dict(sd["cond"])
 
 
 class HybridWeightCalculator:
@@ -283,9 +305,14 @@ class HybridWeightCalculator:
         受 REQ-405 正则化约束：更新后权重向 LLM 先验回归（见 _reg 说明）。
         """
         c_emb = self.condition_store.embed(condition)
-        # 目标 = 当前输出 + reward 引导（正反馈朝当前方向增强，负反馈减弱）
+        # D-047 修复（E4 恒等变换 bug）：原实现对四维同乘 (1+0.1*reward) 再归一化，
+        # 缩放被归一化抵消 -> target 等于 cur -> loss 恒 0，反馈完全无效（E4 实测证实）。
+        # 修复：只调制**条件化维**（semantic/task）——与"反馈调节用户偏好相关维度"
+        # 的设计语义一致；全局维保持不变，归一化后即产生确定方向。
         cur = self.mlp.forward(query_emb, c_emb)
-        target = {d: cur[d] * (1.0 + 0.1 * reward) for d in cur}
+        target = dict(cur)
+        for d in self.conditioning_dims:
+            target[d] = cur[d] * (1.0 + 0.1 * reward)
         target = self._normalize(target)
         t = np.array([target["time"], target["semantic"],
                       target["frequency"], target["task"]], dtype=np.float32)

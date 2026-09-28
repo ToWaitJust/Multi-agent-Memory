@@ -198,6 +198,26 @@ class MemorySchedulingMiddleware:
         self._bump_interactions(res)
         return res
 
+    def submit_feedback(self, query_emb, like: bool, condition) -> dict:
+        """显式反馈入口（E4 反馈闭环的系统级接通）。
+
+        like=True/False -> reward ±1 -> HybridWeightCalculator.update_with_feedback
+        （bandit 式一步更新，target 只调制条件化维 semantic/task，见 weights.py D-047 修复）。
+        weight.uniform 等桩实现下为安全 no-op。
+        """
+        reward = 1.0 if like else -1.0
+        return self.weights.update_with_feedback(query_emb, reward, condition)
+
+    def submit_feedback(self, query_emb, like: bool, condition) -> dict:
+        """显式反馈入口（E4 反馈闭环的系统级接通）。
+
+        like=True/False -> reward ±1 -> HybridWeightCalculator.update_with_feedback
+        （bandit 式一步更新，target 只调制条件化维 semantic/task，见 weights.py D-047 修复）。
+        weight.uniform 等桩实现下为安全 no-op。
+        """
+        reward = 1.0 if like else -1.0
+        return self.weights.update_with_feedback(query_emb, reward, condition)
+
     def _bump_interactions(self, res: ScheduleResult) -> None:
         """记录行为证据：**本轮进 kept 的记忆来自哪个源** → 该源到当前节点的边 interactions +1。
 
