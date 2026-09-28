@@ -505,13 +505,20 @@ SF_DISTRACTORS: list[tuple[str, str]] = [
     ("n_deploy", "论文素材示例：共享池容量在论文配图取十二条"),
 ]
 SF_QUERIES: list[tuple[str, str, list[str], str]] = [
-    # (cur_node, 查询, relevant(全部在强边源), 干扰来源说明)
-    # cur=n_demo 上游：n_graph(0.8) / n_pool(0.8) / n_feedback(0.5) -> 干扰挂 n_feedback
+    # (cur_node, 查询, relevant, 干扰来源说明)
+    # ⚠️ 评估设计（D-043）：**双向**，两个查询分别对应强度配额的"该赢"与"风险"场景，
+    #    而不是只造一个对它有利的场景 —— 这样结论才是"它在什么条件下好/差"，
+    #    而不是笼统的"有没有用"。
+    # 【SF1 · 强度配额该赢】relevant **全部落在强边源**，干扰在最弱边源：
+    #   cur=n_demo 上游 n_graph(0.8)/n_pool(0.8)/n_feedback(0.5)
+    #   均匀配额把 1 个名额浪费在弱源(干扰)；强度配额把它收回来给强源 -> 3/3 命中
     ("n_demo", "演示画布上节点和连线分别代表什么",
-     ["n_graph_m1", "n_pool_m1"], "干扰挂最弱边源 n_feedback(0.5)"),
-    # cur=n_paper 上游：n_graph(0.8) / n_dataset(0.8) / n_metrics(0.5) / n_deploy(0.3) -> 干扰挂 n_deploy
+     ["n_graph_m1", "n_graph_m6", "n_pool_m1"], "干扰挂最弱边源 n_feedback(0.5)"),
+    # 【SF2 · 强度配额的风险场景】relevant **含中等强度源**，干扰在最弱边源：
+    #   cur=n_paper 上游 n_graph(0.8)/n_dataset(0.8)/n_metrics(0.5)/n_deploy(0.3)
+    #   若强度配额把 n_metrics(0.5) 压到 0 席 -> 漏掉它里面的相关记忆
     ("n_paper", "论文里共享池的演进怎么表述",
-     ["n_graph_m6", "n_dataset_m6"], "干扰挂最弱边源 n_deploy(0.3)"),
+     ["n_graph_m6", "n_dataset_m6", "n_metrics_m4"], "干扰挂最弱边源 n_deploy(0.3)"),
 ]
 
 # ── 查询表（人工标注 ground truth，与边强度独立）─────────────────────────────
@@ -740,7 +747,11 @@ def main() -> None:
             "nodes": nodes,
             "edges": [{"src": s, "dst": d, "type": t} for s, d, t in EDGES],
             "corpus": corpus,
-            "relevant": [cur_id],                # 只认当前版；旧版 = 干扰
+            # 评估修正：|relevant| 1 -> 3。原来只有 1 条时 recall 仅 {0,1} 两档、
+            # MRR 退化为"第一条是否命中"，对排序质量几乎没有分辨力。
+            # 补入同模块另外 2 条**现行核心记忆**（真实场景：问某参数现值时，
+            # 该模块的其他现行配置同样是回答所需上下文）。
+            "relevant": [cur_id] + [f"{ch['owner']}_m{x}" for x in (1, 2)],
             "relevant_sources": [ch["owner"]],
             "scene": "SA_time",
         })
@@ -760,7 +771,8 @@ def main() -> None:
             "nodes": nodes,
             "edges": [{"src": s, "dst": d, "type": t} for s, d, t in EDGES],
             "corpus": corpus,
-            "relevant": [cur_id],                # 只认该口径；异口径 = 干扰
+            # 评估修正：|relevant| 1 -> 3（理由同 S-A）
+            "relevant": [cur_id] + [f"{pm['owner']}_m{x}" for x in (1, 2)],
             "relevant_sources": [pm["owner"]],
             "scene": "SB_task",
         })
