@@ -90,7 +90,8 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
               cache_dir: str, offline: bool, injection_cap: int = 10,
               oracle: bool = False, pre_emb: dict | None = None,
               semantic_floor: float | None = None,
-              warmup: bool = False, warmup_n: int = 3) -> list[dict]:
+              warmup: bool = False, warmup_n: int = 3,
+              tier_override: str | None = None) -> list[dict]:
     from srtp_memory.config import SchedulingConfig
     from srtp_memory.condition import ConditionKey
     from srtp_memory.middleware import MemorySchedulingMiddleware
@@ -103,6 +104,10 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
     cfg.embedding_cache_dir = cache_dir
     cfg.max_shared = injection_cap        # 注入上限可覆盖（配额是否 binding 的敏感性探针）
     cfg.top_k = injection_cap             # 同步固定 K 选择器的 top_k，否则配额仍按旧 K 分配
+    if tier_override:                     # D-045：档位覆盖（如 fast 跳过 LLM 先验，
+        cfg.budget.default_tier = tier_override   #   排除网络抖动对实验的干扰）
+    if tier_override:                     # D-045：档位覆盖（如 fast 跳过 LLM 先验，
+        cfg.budget.default_tier = tier_override   #   排除网络抖动对实验的干扰）
     if semantic_floor is not None:        # S0 修复参数的单变量覆盖（免新增 YAML）
         cfg.attention_semantic_floor = float(semantic_floor)
     if not cfg.graph.enabled:
@@ -237,6 +242,8 @@ def main() -> None:
     ap.add_argument("--warmup", action="store_true",
                     help="D-036 预热：先用相关记忆原文跑历史调度，积累行为证据后重算边强度")
     ap.add_argument("--warmup-n", type=int, default=3, help="每条 episode 的预热查询条数")
+    ap.add_argument("--tier", default=None, choices=["fast", "balanced", "full"],
+                    help="覆盖 budget.default_tier（fast 跳过 LLM 先验，无网络依赖）")
     ap.add_argument("--out", default="data/runs/graph_ablation_summary.json")
     args = ap.parse_args()
 
@@ -272,7 +279,8 @@ def main() -> None:
             rows = run_group(gf.stem, gf, episodes, cache_dir, offline,
                              injection_cap=cap, pre_emb=pre_emb,
                              semantic_floor=args.semantic_floor,
-                             warmup=args.warmup, warmup_n=args.warmup_n)
+                             warmup=args.warmup, warmup_n=args.warmup_n,
+                             tier_override=args.tier)
         except Exception as e:  # noqa: BLE001 - 单组失败不中断整体
             print(f"   FAIL -> unavailable: {repr(e)[:140]}")
             summaries[gf.stem] = {"n_episodes": 0, "unavailable": True,
@@ -282,7 +290,8 @@ def main() -> None:
             try:
                 rows_o = run_group("graph_g4_oracle", gf, episodes, cache_dir, offline,
                                    injection_cap=cap, oracle=True, pre_emb=pre_emb,
-                                   warmup=args.warmup, warmup_n=args.warmup_n)
+                                   warmup=args.warmup, warmup_n=args.warmup_n,
+                             tier_override=args.tier)
                 all_rows.extend(rows_o)
                 summaries["graph_g4_oracle"] = aggregate(rows_o)
                 print("    oracle:", json.dumps(summaries["graph_g4_oracle"], ensure_ascii=False))
