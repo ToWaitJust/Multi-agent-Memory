@@ -483,8 +483,10 @@ SC_QUERIES: list[tuple[str, str, list[str]]] = [
     ("n_deploy", "演示服务上线前需要确认哪些前置条件",
      ["n_config_m1", "n_config_m2", "n_config_m3", "n_demo_m11", "n_demo_m12"]),
     # n_paper 的 1 跳上游：n_graph(0.8)、n_dataset(0.8)、n_metrics(0.5) —— 三源
-    ("n_paper", "论文写作前需要梳理哪些实验证据",
-     ["n_graph_m5", "n_dataset_m13", "n_metrics_m15", "n_metrics_m11"]),
+    # 改 cur=n_ablation（上游 n_attention(0.8)/n_weights(0.8)）——
+    # 原先用 n_paper 与 S-F 查询2 共用源池，两个场景的注入项会互相污染（D-040 教训）
+    ("n_ablation", "消融章节需要交代哪些机制设定",
+     ["n_attention_m1", "n_attention_m2", "n_weights_m1", "n_weights_m2"]),
     # n_feedback 的 1 跳上游：仅 n_weights(0.8) —— 单源对照组（G2 不吃亏）
     ("n_feedback", "反馈闭环实现前要确认哪些机制约束",
      ["n_weights_m2", "n_weights_m8", "n_weights_m16"]),
@@ -503,11 +505,13 @@ SF_DISTRACTORS: list[tuple[str, str]] = [
     ("n_deploy", "论文素材示例：共享池容量在论文配图取十二条"),
 ]
 SF_QUERIES: list[tuple[str, str, list[str], str]] = [
-    # (cur_node, 查询, relevant(强边源), 干扰来源说明)
-    ("n_deploy", "演示的会话画布怎么画记忆调度",
-     ["n_demo_m1", "n_demo_m11", "n_demo_m12"], "干扰挂弱边源 n_config"),
+    # (cur_node, 查询, relevant(全部在强边源), 干扰来源说明)
+    # cur=n_demo 上游：n_graph(0.8) / n_pool(0.8) / n_feedback(0.5) -> 干扰挂 n_feedback
+    ("n_demo", "演示画布上节点和连线分别代表什么",
+     ["n_graph_m1", "n_pool_m1"], "干扰挂最弱边源 n_feedback(0.5)"),
+    # cur=n_paper 上游：n_graph(0.8) / n_dataset(0.8) / n_metrics(0.5) / n_deploy(0.3) -> 干扰挂 n_deploy
     ("n_paper", "论文里共享池的演进怎么表述",
-     ["n_graph_m19", "n_graph_m15", "n_graph_m6"], "干扰挂弱边源 n_deploy"),
+     ["n_graph_m6", "n_dataset_m6"], "干扰挂最弱边源 n_deploy(0.3)"),
 ]
 
 # ── 查询表（人工标注 ground truth，与边强度独立）─────────────────────────────
