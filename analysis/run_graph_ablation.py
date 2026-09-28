@@ -91,7 +91,8 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
               oracle: bool = False, pre_emb: dict | None = None,
               semantic_floor: float | None = None,
               warmup: bool = False, warmup_n: int = 3,
-              tier_override: str | None = None) -> list[dict]:
+              tier_override: str | None = None,
+              feedback_warmup: bool = False) -> list[dict]:
     from srtp_memory.config import SchedulingConfig
     from srtp_memory.condition import ConditionKey
     from srtp_memory.middleware import MemorySchedulingMiddleware
@@ -168,8 +169,15 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
                     txt = (by_id_local.get(rid) or {}).get("text")
                     if not txt:
                         continue
-                    mid.schedule_once(txt, task_tag=ep["task_tag"], condition=cond,
-                                      now=ep_now - 3600.0 * k)
+                    res_w = mid.schedule_once(txt, task_tag=ep["task_tag"], condition=cond,
+                                              now=ep_now - 3600.0 * k)
+                    # D-048（E4 场景级消融）：预热调度若命中了相关记忆，模拟用户点赞
+                    # （真实场景：用户对有用的调度结果点赞）-> bandit 更新条件切片 ->
+                    # 正式查询时 MLP 权重已含反馈影响。对照组不带本 flag 即可隔离该变量。
+                    if feedback_warmup and res_w is not None and getattr(res_w, "kept", None):
+                        rel_set = set(ep["relevant"])
+                        if any(m.memory_id in rel_set for m in res_w.kept):
+                            mid.submit_feedback(mid.embedding.encode(txt), True, cond)
                 if mid.budget is not None and old_tier:
                     mid.budget.set_tier(old_tier, "restore")
                 mid.refresh_edge_strength()
@@ -244,6 +252,8 @@ def main() -> None:
     ap.add_argument("--warmup-n", type=int, default=3, help="每条 episode 的预热查询条数")
     ap.add_argument("--tier", default=None, choices=["fast", "balanced", "full"],
                     help="覆盖 budget.default_tier（fast 跳过 LLM 先验，无网络依赖）")
+    ap.add_argument("--feedback-warmup", action="store_true",
+                    help="D-048（E4 消融）：预热命中相关记忆时模拟点赞，反馈经 MLP 影响正式调度")
     ap.add_argument("--out", default="data/runs/graph_ablation_summary.json")
     args = ap.parse_args()
 
@@ -280,7 +290,8 @@ def main() -> None:
                              injection_cap=cap, pre_emb=pre_emb,
                              semantic_floor=args.semantic_floor,
                              warmup=args.warmup, warmup_n=args.warmup_n,
-                             tier_override=args.tier)
+                             tier_override=args.tier,
+                             feedback_warmup=args.feedback_warmup)
         except Exception as e:  # noqa: BLE001 - 单组失败不中断整体
             print(f"   FAIL -> unavailable: {repr(e)[:140]}")
             summaries[gf.stem] = {"n_episodes": 0, "unavailable": True,
@@ -291,7 +302,8 @@ def main() -> None:
                 rows_o = run_group("graph_g4_oracle", gf, episodes, cache_dir, offline,
                                    injection_cap=cap, oracle=True, pre_emb=pre_emb,
                                    warmup=args.warmup, warmup_n=args.warmup_n,
-                             tier_override=args.tier)
+                             tier_override=args.tier,
+                             feedback_warmup=args.feedback_warmup)
                 all_rows.extend(rows_o)
                 summaries["graph_g4_oracle"] = aggregate(rows_o)
                 print("    oracle:", json.dumps(summaries["graph_g4_oracle"], ensure_ascii=False))
