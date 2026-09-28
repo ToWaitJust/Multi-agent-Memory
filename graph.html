@@ -45,6 +45,13 @@ header .back{color:var(--green);text-decoration:none;font-size:13px;flex:none}
 @keyframes flow{to{stroke-dashoffset:-24}}
 .slabel{font-size:10px;font-weight:700;fill:#8a4b12;paint-order:stroke;
   stroke:#fff7ef;stroke-width:3px;pointer-events:none}
+/* 图状态仪表 */
+.dash{font-size:12px}
+.dash .kpi{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #e6efe9}
+.dash .kpi span:last-child{font-weight:700;color:#0c5c49}
+.dash .types{margin-top:10px}
+.dash .trow{display:flex;align-items:center;gap:6px;font-size:11.5px;margin-bottom:4px}
+.dash .trow .sw2{width:10px;height:10px;border-radius:3px;flex:none}
 .nname{font-size:12px;font-weight:600;fill:#1e293b;pointer-events:none}
 .nmeta{font-size:10px;fill:#8aa39a;pointer-events:none}
 .nbadge{font-size:10px;fill:#fff;pointer-events:none}
@@ -225,6 +232,8 @@ function draw(){
     gN.appendChild(g);
   });
   svg.appendChild(gN);
+  // 粒子层（记忆流动动画用，位于节点之上）
+  const gF=el("g",{}); gF.setAttribute("id","flowLayer"); svg.appendChild(gF);
 }
 
 /* ---------- 选中与高亮 ---------- */
@@ -272,6 +281,8 @@ function renderPanel(id, ups, downs){
     ${ins.length?ins.map(e=>edgeRow(e,"in")).join(''):'<div class="empty">无上游（图根）</div>'}
     <h3>下游依赖方（${outs.filter(e=>e.status!=="cycle_rejected").length}）</h3>
     ${outs.length?outs.map(e=>edgeRow(e,"out")).join(''):'<div class="empty">无下游</div>'}
+    <div style="margin-top:14px"><a href="#" onclick="renderDashboard();return false;"
+      style="font-size:12px;color:#0f9d76;text-decoration:none">← 返回图状态仪表</a></div>
   `;
 }
 
@@ -316,6 +327,7 @@ function paintStageA(){
     });
   });
   renderStagePanel();
+  playFlow();          // P2：从各源飞出的记忆粒子汇入当前节点
 }
 
 function renderStagePanel(){
@@ -340,7 +352,67 @@ function renderStagePanel(){
     <div style="font-size:11px;color:#8aa39a;margin-top:10px;line-height:1.6">
       橙色节点与流动虚线 = 本轮入选的上游源；边上数字为该源的 src_score。<br>
       配额 = 该源在本轮注入中的带宽上限（多对多筛选的“带宽分配”）。
+    </div>
+    <div style="margin-top:12px"><a href="#" onclick="renderDashboard();return false;"
+      style="font-size:12px;color:#0f9d76;text-decoration:none">← 返回图状态仪表</a></div>`;
+}
+
+/* ---------- 图状态仪表（P2） ---------- */
+function renderDashboard(){
+  const box = document.getElementById("panel");
+  const n = G.nodes.length, m = G.edges.length;
+  const byType = {};
+  let rejected = 0, sSum = 0, sN = 0;
+  G.edges.forEach(e=>{
+    byType[e.type] = (byType[e.type]||0)+1;
+    if(e.status==="cycle_rejected") rejected++;
+    if(typeof e.strength==="number"){ sSum += e.strength; sN++; }
+  });
+  const forked = G.nodes.filter(nd=>G.edges.filter(e=>e.src===nd.node_id
+    && e.status!=="cycle_rejected").length>=2).length;
+  const trows = Object.keys(TYPE_COLOR).map(t=>{
+    const c = byType[t]||0;
+    const w = m ? Math.round(c/m*100) : 0;
+    return `<div class="trow"><i class="sw2" style="background:${TYPE_COLOR[t]}"></i>
+      <span style="min-width:74px">${t}</span>
+      <span class="bar" style="flex:1"><i style="width:${w}%;background:${TYPE_COLOR[t]}"></i></span>
+      <span style="min-width:20px;text-align:right">${c}</span></div>`;
+  }).join("");
+  box.innerHTML = `
+    <h2>图状态仪表</h2>
+    <div class="dash">
+      <div class="kpi"><span>节点（会话）</span><span>${n}</span></div>
+      <div class="kpi"><span>边（typed 关系）</span><span>${m}</span></div>
+      <div class="kpi"><span>分叉节点（出度≥2）</span><span>${forked}</span></div>
+      <div class="kpi"><span>环拒绝边</span><span>${rejected}</span></div>
+      <div class="kpi"><span>平均边强度</span><span>${sN?(sSum/sN).toFixed(3):"—"}</span></div>
+      <div class="types"><h3 style="margin:10px 0 6px">边类型分布</h3>${trows}</div>
+      <div style="font-size:11px;color:#8aa39a;margin-top:12px;line-height:1.6">
+        数据来源：${G.source==="runtime"?"演示运行时图":"消融数据集固定图"}<br>
+        点击任一节点查看详情；填查询后点「计算选源」看 Stage A 的带宽分配。
+      </div>
     </div>`;
+}
+
+/* ---------- 记忆流动粒子动画（P2） ---------- */
+function playFlow(){
+  const layer = document.getElementById("flowLayer");
+  if(!layer || !SA) return;
+  while(layer.firstChild) layer.removeChild(layer.firstChild);
+  SA.sources.forEach((s, si)=>{
+    // 每源发射 1~3 个粒子，数量随 src_score 递增（体现"源分越高、注入权重越大"）
+    const cnt = Math.max(1, Math.min(3, Math.round(s.src_score*3)));
+    for(let k=0;k<cnt;k++){
+      document.querySelectorAll(`.edge[data-src="${s.node_id}"][data-dst="${SA.cur_node}"]`).forEach(p=>{
+        const c = el("circle",{r:4.5, fill:"#e08a3c", opacity:.92});
+        const am = el("animateMotion", {
+          dur:"1.05s", repeatCount:"1", fill:"freeze",
+          begin:`${si*0.16 + k*0.22}s`, path:p.getAttribute("d")});
+        c.appendChild(am);
+        layer.appendChild(c);
+      });
+    }
+  });
 }
 
 /* ---------- 边浮层 ---------- */
@@ -369,6 +441,7 @@ async function boot(){
   if(!qEl.value) qEl.value = "演示服务上线前需要确认哪些前置条件";
   document.getElementById("saBtn").addEventListener("click", ()=>runStageA(SEL));
   qEl.addEventListener("keydown", e=>{ if(e.key==="Enter") runStageA(SEL); });
+  renderDashboard();      // P2：初始显示图状态仪表
 }
 boot();
 </script>
