@@ -194,7 +194,44 @@ class MemorySchedulingMiddleware:
             changed = self.budget.maybe_adjust()
             if changed:
                 res.perf_tier = self.budget.tier
+        # D-036：把"本轮入选记忆的源 → 当前节点"记为一次行为证据（使用反馈时机）
+        self._bump_interactions(res)
         return res
+
+    def _bump_interactions(self, res: ScheduleResult) -> None:
+        """记录行为证据：**本轮进 kept 的记忆来自哪个源** → 该源到当前节点的边 interactions +1。
+
+        这是"内容相似度会说谎、行为不会"的落点（D-036）：
+        两个节点主题上不像，但 A 的记忆**反复被 B 的实际调度用到** → 这条边就该强。
+        属于「使用反馈」时机，不随 query 变化（保持边强度静态性约束）。
+        """
+        if self.graph is None or not res.kept:
+            return
+        cur = res.cur_node
+        kept_ids = {m.memory_id for m in res.kept}
+        bumped: set[str] = set()
+        for item in res.scored:
+            m = item.get("memory")
+            if m is None or m.memory_id not in kept_ids:
+                continue
+            src = item.get("via_source") or "main"
+            if src == cur or src in bumped:
+                continue
+            bumped.add(src)
+            self.graph.bump_interaction(src, cur, 1)
+
+    def refresh_edge_strength(self, weights: Optional[dict] = None) -> int:
+        """按多因素融合重算边强度（D-036）。权重默认取 config.graph.edge_strength_weights。
+
+        调用时机：建边后 / 预热积累完 interactions 后 / summary 重算后。
+        仍保持"边强度不随 query 变化"的静态性约束。
+        """
+        if self.graph is None:
+            return 0
+        w = weights if weights is not None else dict(self.graph_cfg.edge_strength_weights)
+        return self.graph.apply_multifactor_strength(
+            w, bias=float(getattr(self.graph_cfg, "edge_strength_bias", 0.1)),
+            alpha=float(getattr(self.graph_cfg, "edge_strength_alpha", 0.5)))
 
     def _apply_prior(self, query: str, cond: ConditionKey,
                      n_candidates: int = 50) -> None:

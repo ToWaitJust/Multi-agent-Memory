@@ -89,7 +89,8 @@ def _build_pre_encoder(episodes: list[dict], cfg_path: Path, cache_dir: str, off
 def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
               cache_dir: str, offline: bool, injection_cap: int = 10,
               oracle: bool = False, pre_emb: dict | None = None,
-              semantic_floor: float | None = None) -> list[dict]:
+              semantic_floor: float | None = None,
+              warmup: bool = False, warmup_n: int = 3) -> list[dict]:
     from srtp_memory.config import SchedulingConfig
     from srtp_memory.condition import ConditionKey
     from srtp_memory.middleware import MemorySchedulingMiddleware
@@ -143,6 +144,30 @@ def run_group(group_name: str, cfg_path: Path, episodes: list[dict],
             # (3) 调度
             mid.use_node(ep["cur_node"])
             cond = ConditionKey.parse(f"{ep['user_id']}|{ep['scenario']}|{ep['business']}")
+
+            # (3a) D-036 预热：用该 episode 的相关记忆原文当作"历史会话查询"先跑一遍，
+            #      使「上游源 → 当前节点」积累**行为证据**（interactions）。
+            #      真实对应场景：项目里"先讨论过配置参数，再讨论部署" ——
+            #      于是 n_config 的记忆在 n_deploy 的历史调度中确实被用到过。
+            #      预热不计入指标，仅用于积累边强度的行为因子，然后重算边强度。
+            if warmup:
+                by_id_local = {m["memory_id"]: m for m in ep["corpus"]}
+                ep_now = ep.get("now") or 0.0
+                # 预热临时降到 fast 档：只需积累行为证据，不必花 LLM 先验（省时间与成本）
+                old_tier = None
+                if mid.budget is not None:
+                    old_tier = mid.budget.tier
+                    mid.budget.set_tier("fast", "warmup")
+                for k, rid in enumerate(ep["relevant"][:max(1, warmup_n)], 1):
+                    txt = (by_id_local.get(rid) or {}).get("text")
+                    if not txt:
+                        continue
+                    mid.schedule_once(txt, task_tag=ep["task_tag"], condition=cond,
+                                      now=ep_now - 3600.0 * k)
+                if mid.budget is not None and old_tier:
+                    mid.budget.set_tier(old_tier, "restore")
+                mid.refresh_edge_strength()
+
             man = ep["relevant_sources"] if oracle else None
             q_emb = (pre_emb or {}).get(ep["query"])
             t0 = time.time()
@@ -208,6 +233,9 @@ def main() -> None:
                     help="注入上限 K（默认 10，与设计常量一致）；调小可探测配额是否 binding")
     ap.add_argument("--semantic-floor", type=float, default=None,
                     help="覆盖 attention.normalized 的语义保底权重（S0 敏感性扫描用）")
+    ap.add_argument("--warmup", action="store_true",
+                    help="D-036 预热：先用相关记忆原文跑历史调度，积累行为证据后重算边强度")
+    ap.add_argument("--warmup-n", type=int, default=3, help="每条 episode 的预热查询条数")
     ap.add_argument("--out", default="data/runs/graph_ablation_summary.json")
     args = ap.parse_args()
 
@@ -242,7 +270,8 @@ def main() -> None:
         try:
             rows = run_group(gf.stem, gf, episodes, cache_dir, offline,
                              injection_cap=cap, pre_emb=pre_emb,
-                             semantic_floor=args.semantic_floor)
+                             semantic_floor=args.semantic_floor,
+                             warmup=args.warmup, warmup_n=args.warmup_n)
         except Exception as e:  # noqa: BLE001 - 单组失败不中断整体
             print(f"   FAIL -> unavailable: {repr(e)[:140]}")
             summaries[gf.stem] = {"n_episodes": 0, "unavailable": True,
@@ -251,7 +280,8 @@ def main() -> None:
         if args.with_oracle and gf.stem == "graph_g4":
             try:
                 rows_o = run_group("graph_g4_oracle", gf, episodes, cache_dir, offline,
-                                   injection_cap=cap, oracle=True, pre_emb=pre_emb)
+                                   injection_cap=cap, oracle=True, pre_emb=pre_emb,
+                                   warmup=args.warmup, warmup_n=args.warmup_n)
                 all_rows.extend(rows_o)
                 summaries["graph_g4_oracle"] = aggregate(rows_o)
                 print("    oracle:", json.dumps(summaries["graph_g4_oracle"], ensure_ascii=False))

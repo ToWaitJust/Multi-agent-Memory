@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections import deque
 from pathlib import Path
@@ -165,6 +166,107 @@ class GraphStore:
         if direction in ("in", "both"):
             out += [self._edges[i] for i in self._in.get(node_id, [])]
         return out
+
+    # ------------------------------------------------------------------
+    # D-036（v2 方案 F2）：多因素边强度
+    #   strength = clamp01(b + Σ wᵢ·fᵢ)，各因子先归一化到 [0,1]：
+    #     f_topic    主题相似度（建边时已算的 similarity）
+    #     f_temporal 会话时间窗邻近度 exp(-|Δt|/τ)，τ = 全图会话间隔中位数（自适应）
+    #     f_struct   共同下游占比（Jaccard）—— 被同一批节点依赖 = 同一决策的上游基座
+    #     f_interact **行为证据** 1-exp(-0.3·n)：A 的记忆在 B 的调度中被命中 n 次
+    #   ⚠️ 仍然保持"边强度是静态量"的约束：这些因子都不依赖 query，
+    #      只在「建边 / 使用反馈(interactions) / summary 重算」三时机变化。
+    # ------------------------------------------------------------------
+
+    def bump_interaction(self, src: str, dst: str, n: int = 1) -> Optional[TopicEdge]:
+        """记录行为证据：`src` 节点的记忆在 `dst` 节点的调度中被命中（进 kept）。
+
+        这是"内容相似度会说谎、行为不会"的落点 —— 主题不像但反复被用到的节点对，
+        其边强度应当升高。属于「使用反馈」时机，不随 query 变化。
+        """
+        for eid in self._out.get(src, []):
+            e = self._edges.get(eid)
+            if e is None or e.dst != dst or not e.in_neighborhood:
+                continue
+            e.interactions = int(e.interactions) + int(n)
+            e.updated_at = time.time()
+            return e
+        return None
+
+    def apply_multifactor_strength(self, weights: Optional[dict] = None,
+                                   bias: float = 0.1, alpha: float = 0.5) -> int:
+        """按多因素融合重算全部 active 边的强度；返回被更新的边数。
+
+        **D-037 公式修正**：`strength = clamp01( (1-α)·typed基线 + α·Σwᵢfᵢ/Σwᵢ )`
+
+        原公式 `bias + Σwᵢfᵢ` 归一化后把值域压到高位（实测 f_topic≈0.8~0.95 →
+        所有边强度趋近 1.0），**抹平了 typed 边类型之间的差异**（derives_from 0.9 与
+        similar_to 0.3 变得一样强），等于把"边类型"这个先验废掉了。
+        修正后：**typed 默认强度作为基线保留**，多因素只在其上做**调制**（α=0.5 为半调制）。
+        """
+        w = dict(weights or {})
+        w.setdefault("topic", 1.0)
+        tot = sum(float(v) for v in w.values()) or 1.0
+        tau = self._median_interval()
+        updated = 0
+        for e in self._edges.values():
+            if not e.in_neighborhood:
+                continue
+            f_topic = (float(e.similarity) + 1.0) / 2.0 if e.similarity else 0.5
+            f_temporal = self._temporal_factor(e, tau)
+            f_struct = self._struct_factor(e)
+            f_interact = 1.0 - math.exp(-0.3 * float(e.interactions or 0))
+            e.factors = {
+                "topic": round(f_topic, 4), "temporal": round(f_temporal, 4),
+                "struct": round(f_struct, 4), "interact": round(f_interact, 4),
+                "interactions": int(e.interactions or 0), "tau_h": round(tau / 3600.0, 2),
+            }
+            blended = (float(w.get("topic", 0.0)) * f_topic
+                       + float(w.get("temporal", 0.0)) * f_temporal
+                       + float(w.get("struct", 0.0)) * f_struct
+                       + float(w.get("interact", 0.0)) * f_interact) / tot
+            base = EDGE_DEFAULT_STRENGTH.get(e.type, 0.5)
+            a = max(0.0, min(1.0, float(alpha)))
+            new_val = max(0.0, min(1.0, (1.0 - a) * base + a * blended))
+            if abs(new_val - e.strength) > 1e-9:
+                e.strength = new_val
+                e.updated_at = time.time()
+                updated += 1
+        if updated:
+            self.persist()
+        return updated
+
+    def _median_interval(self) -> float:
+        """全图会话间隔中位数（秒）—— 用于 f_temporal 的自适应时间尺度 τ。"""
+        ts = sorted(n.created_at for n in self._nodes.values() if n.created_at)
+        if len(ts) < 2:
+            return 3600.0
+        gaps = [b - a for a, b in zip(ts, ts[1:]) if b > a]
+        if not gaps:
+            return 3600.0
+        return max(1.0, gaps[len(gaps) // 2])
+
+    def _temporal_factor(self, e: TopicEdge, tau: float) -> float:
+        a = self._nodes.get(e.src)
+        b = self._nodes.get(e.dst)
+        if a is None or b is None or not a.created_at or not b.created_at:
+            return 0.5
+        return math.exp(-abs(b.created_at - a.created_at) / max(tau, 1.0))
+
+    def _struct_factor(self, e: TopicEdge) -> float:
+        """共同下游占比（Jaccard）：两节点被同一批节点依赖的比例。
+
+        DAG 里比"共同邻居"更有意义 —— 被同一批下游依赖，说明它们是同一决策的上游基座。
+        """
+        ds = {x.dst for x in self._edges.values()
+              if x.src == e.src and x.in_neighborhood}
+        dd = {x.dst for x in self._edges.values()
+              if x.src == e.dst and x.in_neighborhood}
+        if not ds or not dd:
+            return 0.0
+        inter = len(ds & dd)
+        union = len(ds | dd)
+        return inter / union if union else 0.0
 
     def _reindex(self) -> None:
         self._out = {n: [] for n in self._nodes}

@@ -35,6 +35,16 @@ class GraphConfig(BaseModel):
     strength_min: float = 0.0         # 邻域展开的边强度下限
     summary_refresh_n: int = 20       # summary 重算触发：新增记忆数
     rel_var_threshold: float = 0.02   # 占位值，待附录 B 标定
+    # ---- D-036（F2）：多因素边强度权重 ----
+    # strength = clamp01(bias + Σ wᵢ·fᵢ)。默认只给 f_topic 权重 → **退化为现状**（向后兼容）；
+    # 给 f_interact 权重即启用"行为证据"（记忆被下游调度真实引用过多少次）。
+    # 「内容相似度会说谎，行为不会」——这是 S-C 攻坚的落点（见 D-035）。
+    edge_strength_weights: dict = Field(default_factory=lambda: {"topic": 1.0})
+    edge_strength_bias: float = 0.1
+    #: D-037：typed 基线 与 多因素调制 的融合比。
+    #: α=0 -> 纯 typed（等价现状）；α=1 -> 纯多因素（行为证据能完全翻盘）；
+    #: α=0.5 -> 半调制（实测 interact 的贡献被 similar_to 的 0.3 基线稀释掉）。
+    edge_strength_alpha: float = 0.5
     graph_dir_template: str = "data/graph/{user}"   # 图持久化目录
     auto_link: bool = True            # 建节点时自动粗识别建边
     fallback_all: bool = True         # 邻域内无候选时退回全池（冷启动保护）

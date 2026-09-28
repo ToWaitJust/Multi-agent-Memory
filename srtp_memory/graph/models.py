@@ -88,6 +88,13 @@ class TopicEdge:
     stage: str = STAGE_COARSE
     status: str = EDGE_STATUS_ACTIVE
     similarity: float = 0.0                # 建边时的相似度（溯源/复算用）
+    #: D-036（F2 多因素边强度）：**行为证据** —— src 节点的记忆在 dst 节点的调度中
+    #: 被实际命中（进 kept）的累计次数。这是"内容相似度会说谎、行为不会"的落点：
+    #: 两个节点主题上不像，但 A 的记忆反复被 B 用到 → 这条边就该强。
+    #: 属于"三时机"里的「用户反馈/使用」时机，不随 query 变化（保持静态性约束）。
+    interactions: int = 0
+    #: 各因子的最近一次计算结果（溯源 + 论文敏感性分析用）
+    factors: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.type not in EDGE_DEFAULT_STRENGTH:
