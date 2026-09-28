@@ -3,447 +3,55 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SRTP · 图拓扑视图（会话关联图）</title>
-<style>
-:root{--bg:#f4f7f5;--card:#ffffff;--ink:#1e293b;--sub:#64748b;--line:#dbe4de;
-      --green:#0f9d76;--blue:#378add;--orange:#e08a3c;--gray:#94a3b8;--hl:#0f9d76}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
-  font:14px/1.6 "PingFang SC","Microsoft YaHei",sans-serif}
-header{display:flex;align-items:center;gap:14px;height:54px;padding:0 20px;background:var(--card);
-  border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden}
-header h1{font-size:15px;margin:0;font-weight:600}
-header .back{color:var(--green);text-decoration:none;font-size:13px;flex:none}
-/* Stage A 选源工具条 */
-.saBar{display:flex;gap:6px;align-items:center;flex:none}
-.saBar input{width:260px;padding:5px 10px;font-size:12px;border:1px solid var(--line);
-  border-radius:7px;outline:none;font-family:inherit}
-.saBar input:focus{border-color:var(--green)}
-.saBar button{padding:5px 12px;font-size:12px;border:none;border-radius:7px;cursor:pointer;
-  background:var(--green);color:#fff;font-family:inherit}
-.saBar button:disabled{background:#b9c9c2;cursor:default}
-.legend{margin-left:auto;display:flex;gap:13px;font-size:12px;color:var(--sub);overflow:hidden;flex-wrap:nowrap}
-.sw{display:inline-block;width:18px;height:3px;border-radius:2px;margin-right:4px;vertical-align:3px}
-.sw.dash{height:0;border-top:2px dashed #94a3b8;background:none!important}
-/* 主体：左图 + 右详情 */
-.main{display:flex;height:calc(100vh - 54px)}
-.stagewrap{position:relative;flex:1;min-width:0}
-.stage{position:absolute;inset:0;overflow:auto}
-.stage::-webkit-scrollbar{height:9px;width:9px}
-.stage::-webkit-scrollbar-thumb{background:#c9d6cf;border-radius:5px}
-#cv{display:block}
-/* 节点卡片 */
-.node{cursor:pointer}
-.node rect{transition:stroke-width .12s,filter .12s}
-.node:hover rect{stroke-width:2.2}
-.node.sel rect{stroke:var(--hl);stroke-width:2.6;filter:drop-shadow(0 0 8px rgba(15,157,118,.55))}
-.node.up rect{stroke:#2b6cb0;stroke-width:2.2}
-.node.dim{opacity:.32}
-/* Stage A 选源高亮：源节点 + 参与选源的边 */
-.node.src rect{stroke:#e08a3c;stroke-width:2.8;fill:#fff7ef}
-.edge.srcEdge{opacity:1;stroke-dasharray:7 5;animation:flow 1.1s linear infinite}
-@keyframes flow{to{stroke-dashoffset:-24}}
-.slabel{font-size:10px;font-weight:700;fill:#8a4b12;paint-order:stroke;
-  stroke:#fff7ef;stroke-width:3px;pointer-events:none}
-/* 图状态仪表 */
-.dash{font-size:12px}
-.dash .kpi{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #e6efe9}
-.dash .kpi span:last-child{font-weight:700;color:#0c5c49}
-.dash .types{margin-top:10px}
-.dash .trow{display:flex;align-items:center;gap:6px;font-size:11.5px;margin-bottom:4px}
-.dash .trow .sw2{width:10px;height:10px;border-radius:3px;flex:none}
-.nname{font-size:12px;font-weight:600;fill:#1e293b;pointer-events:none}
-.nmeta{font-size:10px;fill:#8aa39a;pointer-events:none}
-.nbadge{font-size:10px;fill:#fff;pointer-events:none}
-/* 边 */
-.edge{fill:none;transition:opacity .14s}
-.edge.dim{opacity:.1}
-.edge.hot{opacity:1}
-.ebadge{font-size:9.5px;fill:#476b5d;font-weight:600;pointer-events:none;
-        paint-order:stroke;stroke:#f4f7f5;stroke-width:2.6px}
-/* 层级标签 */
-.lvl{font-size:11px;fill:#9db3aa;font-weight:600}
-/* 右侧详情面板 */
-.panel{width:300px;flex:none;background:var(--card);border-left:1px solid var(--line);
-  padding:16px 18px;overflow:auto}
-.panel h2{font-size:13px;margin:0 0 4px}
-.panel .topic{font-size:15px;font-weight:600;margin:0 0 8px}
-.panel .meta{font-size:11.5px;color:var(--sub);margin-bottom:10px}
-.panel .summary{font-size:12px;color:#334155;background:#f7faf8;border:1px solid var(--line);
-  border-radius:8px;padding:8px 10px;margin-bottom:12px;max-height:120px;overflow:auto}
-.panel h3{font-size:12px;margin:12px 0 6px;color:var(--sub);font-weight:600}
-.elist{font-size:11.5px;margin-bottom:4px;display:flex;align-items:center;gap:6px}
-.etype{font-size:10px;padding:1px 6px;border-radius:4px;color:#fff;flex:none}
-.bar{height:5px;border-radius:3px;background:#e3ece7;flex:1;min-width:40px}
-.bar i{display:block;height:100%;border-radius:3px;background:var(--blue)}
-.empty{font-size:12px;color:var(--sub)}
-/* 浮层提示 */
-.floattip{position:absolute;left:12px;bottom:10px;background:rgba(255,255,255,.94);
-  border:1px solid var(--line);border-radius:8px;padding:4px 12px;font-size:11px;
-  color:var(--sub);pointer-events:none;z-index:5}
-#tip{position:fixed;background:#1e293b;color:#fff;font-size:11.5px;border-radius:6px;
-  padding:6px 10px;pointer-events:none;opacity:0;transition:opacity .12s;max-width:300px;z-index:20;line-height:1.5}
-</style>
+<title>SRTP · 图拓扑视图</title>
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header>
-  <a class="back" href="/">← 返回控制台</a>
-  <a class="back" href="/canvas">会话画布</a>
-  <h1>图拓扑视图 · 会话关联图</h1>
-  <div class="saBar">
-    <input id="q" placeholder="输入查询，点节点查看 Stage A 选源" autocomplete="off">
-    <button id="saBtn">计算选源</button>
-  </div>
-  <div class="legend">
-    <span><i class="sw" style="background:var(--blue)"></i>depends_on</span>
-    <span><i class="sw" style="background:var(--green)"></i>derives_from</span>
-    <span><i class="sw" style="background:var(--orange)"></i>references</span>
-    <span><i class="sw" style="background:var(--gray)"></i>similar_to</span>
-    <span><i class="sw dash"></i>虚线 = 成环被降级</span>
-    <span>线宽 = 边强度</span>
+
+<header class="topbar">
+  <a class="navlink" href="/">控制台</a>
+  <a class="navlink" href="/canvas">会话画布</a>
+  <a class="navlink on" href="/graph">图拓扑</a>
+  <h1>图拓扑视图</h1>
+  <span class="spacer"></span>
+  <div class="toolbar">
+    <div class="field">
+      <input id="q" placeholder="输入查询，点节点后计算选源" autocomplete="off">
+    </div>
+    <button class="btn btn-primary" id="saBtn">计算选源</button>
+    <div class="seg" role="group" aria-label="布局">
+      <button data-layout="breadthfirst" class="on">分层</button>
+      <button data-layout="circle">环形</button>
+      <button data-layout="grid">网格</button>
+    </div>
+    <button class="btn btn-ghost" id="fitBtn">适应窗口</button>
   </div>
 </header>
 
-<div class="main">
-  <div class="stagewrap">
-    <div class="stage" id="stage">
-      <svg id="cv" xmlns="http://www.w3.org/2000/svg"></svg>
+<div class="split">
+  <div class="canvas-wrap">
+    <div id="cy"></div>
+
+    <div class="legend">
+      <div><i class="sw" style="background:#3b82f6"></i>depends_on 依赖</div>
+      <div><i class="sw" style="background:#0f9d76"></i>derives_from 派生</div>
+      <div><i class="sw" style="background:#e08a3c"></i>references 引用</div>
+      <div><i class="sw" style="background:#9aa9a3"></i>similar_to 相近</div>
+      <div style="margin-top:4px;color:#93a69d">边宽 = 强度 · 虚线 = 成环被降级</div>
     </div>
-    <div class="floattip" id="floattip">节点 = 一次主题会话 · 箭头方向「被依赖方 → 依赖方」 · 点击节点看它的上游源与详情</div>
+
+    <div class="float-tip" id="ftip">载入中…</div>
   </div>
-  <aside class="panel" id="panel"><div class="empty">点击左侧任一节点查看详情</div></aside>
+
+  <aside class="side" id="side"></aside>
 </div>
 
 <div id="tip"></div>
+<div id="flash" style="position:fixed;left:50%;top:70px;transform:translateX(-50%);z-index:99;
+  background:#152b23;color:#fff;font-size:12.5px;padding:9px 16px;border-radius:10px;
+  box-shadow:0 10px 28px rgba(16,42,33,.25);opacity:0;transition:opacity .25s;pointer-events:none"></div>
 
-<script>
-const SVGNS = "http://www.w3.org/2000/svg";
-const TYPE_COLOR = {depends_on:"#378add", derives_from:"#0f9d76", references:"#e08a3c", similar_to:"#94a3b8"};
-const TYPE_LABEL = {depends_on:"依赖", derives_from:"派生", references:"引用", similar_to:"相近"};
-const NODE_W = 156, NODE_H = 50, GAP_X = 230, GAP_Y = 66, PAD = 44;
-const svg = document.getElementById("cv"), tip = document.getElementById("tip");
-let G = {nodes:[], edges:[]}, POS = {}, SEL = null;
-
-function el(tag, attrs){const e=document.createElementNS(SVGNS,tag);
-  for(const k in attrs||{}) e.setAttribute(k, attrs[k]); return e;}
-
-/* ---------- DAG 分层布局（层号 = 最长上游路径长度） ---------- */
-function layout(nodes, edges){
-  const ids = nodes.map(n=>n.node_id);
-  const act = edges.filter(e=>e.status!=="cycle_rejected");
-  const indeg={}, adj={}, lvl={};
-  ids.forEach(i=>{indeg[i]=0;adj[i]=[];lvl[i]=0;});
-  act.forEach(e=>{ if(adj[e.src]&&indeg[e.dst]!==undefined){adj[e.src].push(e.dst); indeg[e.dst]++;}});
-  // Kahn 逐层剥离，同时推进层级
-  const q = ids.filter(i=>indeg[i]===0); let seen=0;
-  while(q.length){ const cur=q.shift(); seen++;
-    adj[cur].forEach(nxt=>{ lvl[nxt]=Math.max(lvl[nxt], lvl[cur]+1);
-      if(--indeg[nxt]===0) q.push(nxt); });
-  }
-  if(seen<ids.length){ // 有环（理论上已被环检测降级，兜底）
-    ids.forEach(i=>{ if(!lvl[i]) lvl[i]=0; });
-  }
-  // 同层内按创建时间排序
-  const byLvl={};
-  ids.forEach(i=>{(byLvl[lvl[i]]=byLvl[lvl[i]]||[]).push(i);});
-  Object.values(byLvl).forEach(arr=>arr.sort((a,b)=>{
-    const na=nodes.find(n=>n.node_id===a)||{}, nb=nodes.find(n=>n.node_id===b)||{};
-    return (na.created_at||0)-(nb.created_at||0);
-  }));
-  // 坐标
-  const pos={};
-  Object.keys(byLvl).sort((a,b)=>a-b).forEach(L=>{
-    byLvl[L].forEach((id,row)=>{ pos[id]={x:PAD+L*GAP_X, y:PAD+row*GAP_Y, lvl:+L}; });
-  });
-  return pos;
-}
-
-/* ---------- 绘制 ---------- */
-function draw(){
-  while(svg.firstChild) svg.removeChild(svg.firstChild);
-  const ids = G.nodes.map(n=>n.node_id);
-  POS = layout(G.nodes, G.edges);
-  const maxX = Math.max(...ids.map(i=>POS[i]?POS[i].x:0)) + NODE_W + PAD;
-  const maxY = Math.max(...ids.map(i=>POS[i]?POS[i].y:0)) + NODE_H + PAD;
-  svg.setAttribute("width", Math.max(maxX, 640)); svg.setAttribute("height", Math.max(maxY, 420));
-  svg.setAttribute("viewBox", `0 0 ${Math.max(maxX,640)} ${Math.max(maxY,420)}`);
-
-  // 层级标签
-  const lvls=[...new Set(ids.map(i=>POS[i]&&POS[i].lvl))].sort((a,b)=>a-b);
-  lvls.forEach(L=>{
-    const t=el("text",{x:PAD+L*GAP_X, y:16, class:"lvl"}); t.textContent="L"+L; svg.appendChild(t);
-  });
-
-  // 箭头 marker（每类边一个颜色）
-  const defs=el("defs",{});
-  Object.keys(TYPE_COLOR).forEach(t=>{
-    const m=el("marker",{id:"ar_"+t, viewBox:"0 0 10 10", refX:"9", refY:"5",
-      markerWidth:"6", markerHeight:"6", orient:"auto-start-reverse"});
-    m.appendChild(el("path",{d:"M0,0 L10,5 L0,10 z", fill:TYPE_COLOR[t]}));
-    defs.appendChild(m);
-  });
-  svg.appendChild(defs);
-
-  // 边
-  const gE=el("g",{});
-  G.edges.forEach(e=>{
-    if(POS[e.src]==null||POS[e.dst]==null) return;
-    const rejected = e.status==="cycle_rejected";
-    const a=POS[e.src], b=POS[e.dst];
-    const x1=a.x+NODE_W, y1=a.y+NODE_H/2, x2=b.x, y2=b.y+NODE_H/2;
-    const mx=(x1+x2)/2;
-    const p=el("path",{d:`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`,
-      class:"edge", stroke:TYPE_COLOR[e.type]||"#94a3b8",
-      "stroke-width": rejected?1.2:(1+5*(e.strength||0.5)),
-      "stroke-dasharray": rejected?"5 4":null,
-      "marker-end": rejected?null:`url(#ar_${e.type})`,
-      opacity: rejected?.5:.78});
-    p.dataset.src = e.src; p.dataset.dst = e.dst; p.dataset.mx = mx;
-    p.dataset.my = (y1+y2)/2;
-    p.addEventListener("mouseover", ev=>showTip(ev, e));
-    p.addEventListener("mousemove", ev=>moveTip(ev));
-    p.addEventListener("mouseout", hideTip);
-    gE.appendChild(p);
-  });
-  svg.appendChild(gE);
-  // Stage A 源分标签层（在节点之下、边之上）
-  const gL=el("g",{}); gL.setAttribute("id","srcLabels"); svg.appendChild(gL);
-
-  // 节点
-  const gN=el("g",{});
-  G.nodes.forEach(n=>{
-    const p=POS[n.node_id]; if(!p) return;
-    const nm=n.n_memories||0;
-    const w = nm>=24?NODE_W+16 : (nm>=12?NODE_W : NODE_W-14);
-    const g=el("g",{class:"node", "data-id":n.node_id});
-    g.appendChild(el("rect",{x:p.x, y:p.y, width:w, height:NODE_H, rx:9,
-      fill:"#fff", stroke:"#cfdcd6", "stroke-width":1.2}));
-    // 记忆数徽标
-    if(nm>0){
-      g.appendChild(el("rect",{x:p.x+w-30, y:p.y+8, width:22, height:14, rx:7, fill:"#e1f5ee"}));
-      const bt=el("text",{x:p.x+w-19, y:p.y+18.5, class:"nbadge", fill:"#0c5c49",
-        "text-anchor":"middle"}); bt.textContent=nm; g.appendChild(bt);
-    }
-    const t1=el("text",{x:p.x+11, y:p.y+20, class:"nname"});
-    t1.textContent=(n.topic||n.node_id).slice(0,11); g.appendChild(t1);
-    const t2=el("text",{x:p.x+11, y:p.y+37, class:"nmeta"});
-    t2.textContent=n.node_id; g.appendChild(t2);
-    g.addEventListener("click",()=>select(n.node_id));
-    gN.appendChild(g);
-  });
-  svg.appendChild(gN);
-  // 粒子层（记忆流动动画用，位于节点之上）
-  const gF=el("g",{}); gF.setAttribute("id","flowLayer"); svg.appendChild(gF);
-}
-
-/* ---------- 选中与高亮 ---------- */
-function select(id){
-  SEL=id;
-  const ups = G.edges.filter(e=>e.dst===id && e.status!=="cycle_rejected").map(e=>e.src);
-  const downs = G.edges.filter(e=>e.src===id && e.status!=="cycle_rejected").map(e=>e.dst);
-  const near = new Set([id,...ups,...downs]);
-  document.querySelectorAll(".node").forEach(g=>{
-    const nid=g.getAttribute("data-id");
-    g.classList.toggle("sel", nid===id);
-    g.classList.toggle("up", ups.includes(nid));
-    g.classList.toggle("dim", !near.has(nid));
-  });
-  document.querySelectorAll(".edge").forEach((p,i)=>{
-    const e=G.edges[i]; if(!e) return;
-    p.classList.toggle("dim", !(e.src===id||e.dst===id));
-    p.classList.toggle("hot", (e.src===id||e.dst===id));
-  });
-  renderPanel(id, ups, downs);
-  // 预取该节点的选源结果（只填服务端缓存，不覆盖详情面板）——点按钮时即可秒显
-  const qv = (document.getElementById("q").value || "").trim();
-  if(qv){ fetch(`/api/stage_a?node=${encodeURIComponent(id)}&q=${encodeURIComponent(qv)}`)
-    .then(r=>r.json()).catch(()=>{}); }
-}
-
-function renderPanel(id, ups, downs){
-  const n=G.nodes.find(x=>x.node_id===id)||{};
-  const box=document.getElementById("panel");
-  const edgeRow=(e,dir)=>{
-    const w=Math.round((e.strength||0)*100);
-    return `<div class="elist">
-      <span class="etype" style="background:${TYPE_COLOR[e.type]||'#94a3b8'}">${TYPE_LABEL[e.type]||e.type}</span>
-      <span>${dir==="in"?"← 源":"→ 下游"} <b>${dir==="in"?e.src:e.dst}</b></span>
-      <span class="bar"><i style="width:${w}%"></i></span>
-      <span>${(e.strength||0).toFixed(2)}</span></div>`;
-  };
-  const ins=G.edges.filter(e=>e.dst===id), outs=G.edges.filter(e=>e.src===id);
-  box.innerHTML=`
-    <h2>节点详情</h2>
-    <div class="topic">${n.topic||id}</div>
-    <div class="meta">${n.node_id} · 第 ${(POS[id]&&POS[id].lvl+1)||'?'} 层 · 记忆 ${n.n_memories||0} 条</div>
-    ${n.summary?`<div class="summary">${n.summary}</div>`:''}
-    <h3>上游源节点（${ins.filter(e=>e.status!=="cycle_rejected").length}）</h3>
-    ${ins.length?ins.map(e=>edgeRow(e,"in")).join(''):'<div class="empty">无上游（图根）</div>'}
-    <h3>下游依赖方（${outs.filter(e=>e.status!=="cycle_rejected").length}）</h3>
-    ${outs.length?outs.map(e=>edgeRow(e,"out")).join(''):'<div class="empty">无下游</div>'}
-    <div style="margin-top:14px"><a href="#" onclick="renderDashboard();return false;"
-      style="font-size:12px;color:#0f9d76;text-decoration:none">← 返回图状态仪表</a></div>
-  `;
-}
-
-/* ---------- Stage A 选源（可视化 P1） ---------- */
-let SA = null;   // 最近一次选源结果
-
-async function runStageA(nodeId){
-  const q = (document.getElementById("q").value || "").trim();
-  const btn = document.getElementById("saBtn");
-  if(!nodeId){ alert("先点击一个节点作为「当前节点」"); return; }
-  if(!q){ alert("请先在输入框填写查询"); return; }
-  btn.disabled = true; btn.textContent = "计算中…";
-  try{
-    const r = await fetch(`/api/stage_a?node=${encodeURIComponent(nodeId)}&q=${encodeURIComponent(q)}`)
-      .then(x=>x.json());
-    if(!r.ok){ throw new Error(r.error || "失败"); }
-    SA = r.stage_a;
-    paintStageA();
-  }catch(e){
-    alert("选源计算失败：" + e.message);
-  }finally{
-    btn.disabled = false; btn.textContent = "计算选源";
-  }
-}
-
-function paintStageA(){
-  // 清掉上一次
-  document.querySelectorAll("#srcLabels").forEach(g=>{ while(g.firstChild) g.removeChild(g.firstChild); });
-  document.querySelectorAll(".node").forEach(g=>g.classList.remove("src"));
-  document.querySelectorAll(".edge").forEach(p=>p.classList.remove("srcEdge"));
-  if(!SA){ renderPanel(SEL, [], []); return; }
-  const labs = document.getElementById("srcLabels");
-  SA.sources.forEach(s=>{
-    document.querySelectorAll(`.node[data-id="${s.node_id}"]`).forEach(g=>g.classList.add("src"));
-    // 把 src_score 标在该源指向当前节点的边上（取中点略上移）
-    document.querySelectorAll(`.edge[data-src="${s.node_id}"][data-dst="${SA.cur_node}"]`).forEach(p=>{
-      p.classList.add("srcEdge");
-      const t = el("text",{x:+p.dataset.mx, y:+p.dataset.my-8, class:"slabel",
-        "text-anchor":"middle"});
-      t.textContent = `src ${s.src_score.toFixed(2)}`;
-      labs.appendChild(t);
-    });
-  });
-  renderStagePanel();
-  playFlow();          // P2：从各源飞出的记忆粒子汇入当前节点
-}
-
-function renderStagePanel(){
-  const box = document.getElementById("panel");
-  if(!SA){ return; }
-  const rows = SA.sources.map(s=>`
-    <div class="elist" title="strength=静态边强度 relevance=query×节点 src_score=λ融合">
-      <b style="min-width:78px">${s.node_id}</b>
-      <span class="bar"><i style="width:${Math.round(s.src_score*100)}%;background:#e08a3c"></i></span>
-      <span style="white-space:nowrap">${s.src_score.toFixed(3)}</span>
-      <span style="color:#94a3b8;white-space:nowrap">${s.quota>0?("配额 "+s.quota):"软偏置"}</span>
-    </div>
-    <div style="font-size:10.5px;color:#8aa39a;margin:-2px 0 6px 84px">
-      strength ${s.strength.toFixed(3)} · relevance ${s.relevance.toFixed(3)}
-    </div>`).join("");
-  box.innerHTML = `
-    <h2>Stage A 选源（实算）</h2>
-    <div class="topic">${SA.cur_node}</div>
-    <div class="meta">查询：${SA.query}<br>模式 ${SA.mode} · λ=${SA.lambda}（strength 与 relevance 的融合比）</div>
-    <h3>入选源（${SA.sources.length}）</h3>
-    ${rows || '<div class="empty">无上游源（图根节点）</div>'}
-    <div style="font-size:11px;color:#8aa39a;margin-top:10px;line-height:1.6">
-      橙色节点与流动虚线 = 本轮入选的上游源；边上数字为该源的 src_score。<br>
-      配额 = 该源在本轮注入中的带宽上限（多对多筛选的“带宽分配”）。
-    </div>
-    <div style="margin-top:12px"><a href="#" onclick="renderDashboard();return false;"
-      style="font-size:12px;color:#0f9d76;text-decoration:none">← 返回图状态仪表</a></div>`;
-}
-
-/* ---------- 图状态仪表（P2） ---------- */
-function renderDashboard(){
-  const box = document.getElementById("panel");
-  const n = G.nodes.length, m = G.edges.length;
-  const byType = {};
-  let rejected = 0, sSum = 0, sN = 0;
-  G.edges.forEach(e=>{
-    byType[e.type] = (byType[e.type]||0)+1;
-    if(e.status==="cycle_rejected") rejected++;
-    if(typeof e.strength==="number"){ sSum += e.strength; sN++; }
-  });
-  const forked = G.nodes.filter(nd=>G.edges.filter(e=>e.src===nd.node_id
-    && e.status!=="cycle_rejected").length>=2).length;
-  const trows = Object.keys(TYPE_COLOR).map(t=>{
-    const c = byType[t]||0;
-    const w = m ? Math.round(c/m*100) : 0;
-    return `<div class="trow"><i class="sw2" style="background:${TYPE_COLOR[t]}"></i>
-      <span style="min-width:74px">${t}</span>
-      <span class="bar" style="flex:1"><i style="width:${w}%;background:${TYPE_COLOR[t]}"></i></span>
-      <span style="min-width:20px;text-align:right">${c}</span></div>`;
-  }).join("");
-  box.innerHTML = `
-    <h2>图状态仪表</h2>
-    <div class="dash">
-      <div class="kpi"><span>节点（会话）</span><span>${n}</span></div>
-      <div class="kpi"><span>边（typed 关系）</span><span>${m}</span></div>
-      <div class="kpi"><span>分叉节点（出度≥2）</span><span>${forked}</span></div>
-      <div class="kpi"><span>环拒绝边</span><span>${rejected}</span></div>
-      <div class="kpi"><span>平均边强度</span><span>${sN?(sSum/sN).toFixed(3):"—"}</span></div>
-      <div class="types"><h3 style="margin:10px 0 6px">边类型分布</h3>${trows}</div>
-      <div style="font-size:11px;color:#8aa39a;margin-top:12px;line-height:1.6">
-        数据来源：${G.source==="runtime"?"演示运行时图":"消融数据集固定图"}<br>
-        点击任一节点查看详情；填查询后点「计算选源」看 Stage A 的带宽分配。
-      </div>
-    </div>`;
-}
-
-/* ---------- 记忆流动粒子动画（P2） ---------- */
-function playFlow(){
-  const layer = document.getElementById("flowLayer");
-  if(!layer || !SA) return;
-  while(layer.firstChild) layer.removeChild(layer.firstChild);
-  SA.sources.forEach((s, si)=>{
-    // 每源发射 1~3 个粒子，数量随 src_score 递增（体现"源分越高、注入权重越大"）
-    const cnt = Math.max(1, Math.min(3, Math.round(s.src_score*3)));
-    for(let k=0;k<cnt;k++){
-      document.querySelectorAll(`.edge[data-src="${s.node_id}"][data-dst="${SA.cur_node}"]`).forEach(p=>{
-        const c = el("circle",{r:4.5, fill:"#e08a3c", opacity:.92});
-        const am = el("animateMotion", {
-          dur:"1.05s", repeatCount:"1", fill:"freeze",
-          begin:`${si*0.16 + k*0.22}s`, path:p.getAttribute("d")});
-        c.appendChild(am);
-        layer.appendChild(c);
-      });
-    }
-  });
-}
-
-/* ---------- 边浮层 ---------- */
-function showTip(ev,e){
-  tip.innerHTML=`<b>${e.src} → ${e.dst}</b><br>${TYPE_LABEL[e.type]||e.type} · 强度 ${(e.strength||0).toFixed(2)}`
-    + (e.similarity?` · 相似度 ${e.similarity.toFixed(3)}`:'')
-    + (e.evidence?`<br><span style="opacity:.8">${e.evidence.slice(0,90)}</span>`:'');
-  tip.style.opacity="1"; moveTip(ev);
-}
-function moveTip(ev){tip.style.left=(ev.clientX+14)+"px"; tip.style.top=(ev.clientY+14)+"px";}
-function hideTip(){tip.style.opacity="0";}
-
-/* ---------- 载入 ---------- */
-async function boot(){
-  const r=await fetch("/api/graph").then(x=>x.json());
-  if(!r.ok||!r.graph){document.getElementById("panel").innerHTML=`<div class="empty">载入失败</div>`;return;}
-  G=r.graph;
-  if(!G.nodes.length){
-    document.getElementById("floattip").textContent="暂无图数据：先在控制台发起一轮会话（或跑一次消融）后刷新";
-  }
-  draw();
-  const st=document.getElementById("floattip");
-  st.textContent += `　|　数据来源：${G.source==="runtime"?"演示运行时图":"消融数据集固定图"}　|　节点 ${G.nodes.length} · 边 ${G.edges.length}`;
-  // 预填一条链式依赖查询（最能体现"选源"价值），点节点后一键算选源
-  const qEl = document.getElementById("q");
-  if(!qEl.value) qEl.value = "演示服务上线前需要确认哪些前置条件";
-  document.getElementById("saBtn").addEventListener("click", ()=>runStageA(SEL));
-  qEl.addEventListener("keydown", e=>{ if(e.key==="Enter") runStageA(SEL); });
-  renderDashboard();      // P2：初始显示图状态仪表
-}
-boot();
-</script>
+<script src="/static/vendor/cytoscape.min.js"></script>
+<script src="/static/graph.js"></script>
 </body>
 </html>

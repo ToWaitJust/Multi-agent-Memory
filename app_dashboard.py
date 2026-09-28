@@ -527,6 +527,31 @@ def _stage_a_payload(node_id: str, query: str, K: int = 8) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _serve_static(self, path: str) -> None:
+        """静态资源（/static/**）—— 仅允许 static/ 目录内，防目录穿越。
+
+        前端共享资源（app.css / graph.js / vendor/cytoscape.min.js）走这里，
+        使三个视图能复用同一套设计系统与脚本，而不是各自内联一份。
+        """
+        rel = path[len("/static/"):].split("?")[0]
+        base = (ROOT / "static").resolve()
+        target = (base / rel).resolve()
+        if not str(target).startswith(str(base)) or not target.is_file():
+            self._send(404, b"not found", "text/plain")
+            return
+        ctype = {
+            ".css": "text/css; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+            ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".woff2": "font/woff2",
+        }.get(target.suffix.lower(), "application/octet-stream")
+        try:
+            self._send(200, target.read_bytes(), ctype)
+        except OSError:
+            self._send(404, b"not found", "text/plain")
+
     def _send(self, code: int, body: bytes, ctype: str) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -542,6 +567,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         p = self.path.split("?")[0]
+        if p.startswith("/static/"):
+            # 共享前端资源（app.css / graph.js / vendor 下的离线图库）
+            self._serve_static(p)
+            return
         if p in ("/", "/index.html"):
             html = (ROOT / "dashboard.html").read_text(encoding="utf-8")
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
