@@ -37,7 +37,7 @@ import numpy as np
 from srtp_memory.attention import MemoryCandidate
 from srtp_memory.config import SchedulingConfig
 from srtp_memory.middleware import MemorySchedulingMiddleware
-from srtp_memory.plugins import register_all
+from srtp_memory.plugins import get_plugin, register_all
 from srtp_memory.weights import DEFAULT_WEIGHTS
 
 import demo_canvas  # 会话画布：模拟主副线聊天历史 + 画布记忆种子（data/demo/canvas_history.json）
@@ -470,6 +470,62 @@ def _graph_payload(user: str = "u_tu") -> dict:
             "types": list(_EDGE_DEFAULT_STRENGTH.keys())}
 
 
+#: Stage A 选源结果的进程内缓存（可视化 P1：查询 × 当前节点 → 选源明细）
+_STAGE_A_CACHE: dict = {}
+
+
+def _stage_a_payload(node_id: str, query: str, K: int = 8) -> dict:
+    """可视化 P1：用**数据集固定图** + 给定查询，实算一次 Stage A 选源。
+
+    为什么用数据集固定图而不是演示运行时图：图结构在消融里是常量（由数据集注入），
+    可视化它同样有说服力，且不要求先跑过演示服务。返回每个候选源的
+    `strength`（静态边强度）/ `relevance`（query×节点）/ `src_score`（λ 融合）/ `quota`（配额），
+    前端据此高亮源节点并在边上浮出 src_score。
+    """
+    key = (node_id, query, K)
+    if key in _STAGE_A_CACHE:
+        return _STAGE_A_CACHE[key]
+    from srtp_memory.graph.graph_store import GraphStore
+    from srtp_memory.graph.source_selector import SourceSelector
+
+    cfg = SchedulingConfig.load(ROOT / "config/srtp.yaml")
+    register_all()
+    emb = get_plugin(cfg.embedding_impl)
+
+    ds = ROOT / "data" / "graph_dataset.jsonl"
+    if not ds.exists():
+        return {"cur_node": node_id, "query": query, "sources": [],
+                "note": "数据集不存在，无法演示选源（先跑 python -m analysis.gen_graph_dataset）"}
+    with open(ds, encoding="utf-8") as f:
+        first = json.loads(f.readline())
+
+    tmp = ROOT / "data" / "_stage_a_tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    store = GraphStore(user_id="u_tu", root_dir=str(tmp))
+    for nd in first.get("nodes") or []:
+        vec = emb.encode(f"{nd.get('topic', '')}。{nd.get('summary', '')}")
+        store.create_node(nd.get("topic", ""), emb=vec, summary=nd.get("summary", ""),
+                          node_id=nd.get("node_id"))
+    for e in first.get("edges") or []:
+        store.add_edge(e["src"], e["dst"], e["type"])
+
+    qv = emb.encode(query) if query else None
+    sel = SourceSelector(store, cfg.graph).select(node_id, qv, K=K, mode=cfg.graph.quota_mode)
+    out = {
+        "cur_node": node_id, "query": query, "mode": getattr(sel, "mode", ""),
+        "lambda": float(getattr(cfg.graph, "quota_lambda", 0.7)),
+        "sources": [
+            {"node_id": s.node_id, "strength": round(float(s.strength), 4),
+             "relevance": round(float(s.relevance), 4),
+             "src_score": round(float(s.src_score), 4),
+             "quota": int(s.quota)}
+            for s in sel.sources
+        ],
+    }
+    _STAGE_A_CACHE[key] = out
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, body: bytes, ctype: str) -> None:
         self.send_response(code)
@@ -498,6 +554,20 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/api/graph":
             try:
                 body = json.dumps({"ok": True, "graph": _graph_payload()},
+                                  ensure_ascii=False).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception as e:  # noqa: BLE001
+                self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
+                                           ensure_ascii=False).encode("utf-8"),
+                           "application/json; charset=utf-8")
+        elif p == "/api/stage_a":
+            # 可视化 P1：给定节点与查询，实算 Stage A 选源（源分/配额明细）
+            try:
+                from urllib.parse import urlparse, parse_qs
+                qs = parse_qs(urlparse(self.path).query)
+                node_id = (qs.get("node") or [""])[0]
+                query = (qs.get("q") or [""])[0]
+                body = json.dumps({"ok": True, "stage_a": _stage_a_payload(node_id, query)},
                                   ensure_ascii=False).encode("utf-8")
                 self._send(200, body, "application/json; charset=utf-8")
             except Exception as e:  # noqa: BLE001

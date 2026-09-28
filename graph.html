@@ -14,6 +14,14 @@ header{display:flex;align-items:center;gap:14px;height:54px;padding:0 20px;backg
   border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden}
 header h1{font-size:15px;margin:0;font-weight:600}
 header .back{color:var(--green);text-decoration:none;font-size:13px;flex:none}
+/* Stage A 选源工具条 */
+.saBar{display:flex;gap:6px;align-items:center;flex:none}
+.saBar input{width:260px;padding:5px 10px;font-size:12px;border:1px solid var(--line);
+  border-radius:7px;outline:none;font-family:inherit}
+.saBar input:focus{border-color:var(--green)}
+.saBar button{padding:5px 12px;font-size:12px;border:none;border-radius:7px;cursor:pointer;
+  background:var(--green);color:#fff;font-family:inherit}
+.saBar button:disabled{background:#b9c9c2;cursor:default}
 .legend{margin-left:auto;display:flex;gap:13px;font-size:12px;color:var(--sub);overflow:hidden;flex-wrap:nowrap}
 .sw{display:inline-block;width:18px;height:3px;border-radius:2px;margin-right:4px;vertical-align:3px}
 .sw.dash{height:0;border-top:2px dashed #94a3b8;background:none!important}
@@ -31,6 +39,12 @@ header .back{color:var(--green);text-decoration:none;font-size:13px;flex:none}
 .node.sel rect{stroke:var(--hl);stroke-width:2.6;filter:drop-shadow(0 0 8px rgba(15,157,118,.55))}
 .node.up rect{stroke:#2b6cb0;stroke-width:2.2}
 .node.dim{opacity:.32}
+/* Stage A 选源高亮：源节点 + 参与选源的边 */
+.node.src rect{stroke:#e08a3c;stroke-width:2.8;fill:#fff7ef}
+.edge.srcEdge{opacity:1;stroke-dasharray:7 5;animation:flow 1.1s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-24}}
+.slabel{font-size:10px;font-weight:700;fill:#8a4b12;paint-order:stroke;
+  stroke:#fff7ef;stroke-width:3px;pointer-events:none}
 .nname{font-size:12px;font-weight:600;fill:#1e293b;pointer-events:none}
 .nmeta{font-size:10px;fill:#8aa39a;pointer-events:none}
 .nbadge{font-size:10px;fill:#fff;pointer-events:none}
@@ -69,6 +83,10 @@ header .back{color:var(--green);text-decoration:none;font-size:13px;flex:none}
   <a class="back" href="/">← 返回控制台</a>
   <a class="back" href="/canvas">会话画布</a>
   <h1>图拓扑视图 · 会话关联图</h1>
+  <div class="saBar">
+    <input id="q" placeholder="输入查询，点节点查看 Stage A 选源" autocomplete="off">
+    <button id="saBtn">计算选源</button>
+  </div>
   <div class="legend">
     <span><i class="sw" style="background:var(--blue)"></i>depends_on</span>
     <span><i class="sw" style="background:var(--green)"></i>derives_from</span>
@@ -173,12 +191,16 @@ function draw(){
       "stroke-dasharray": rejected?"5 4":null,
       "marker-end": rejected?null:`url(#ar_${e.type})`,
       opacity: rejected?.5:.78});
+    p.dataset.src = e.src; p.dataset.dst = e.dst; p.dataset.mx = mx;
+    p.dataset.my = (y1+y2)/2;
     p.addEventListener("mouseover", ev=>showTip(ev, e));
     p.addEventListener("mousemove", ev=>moveTip(ev));
     p.addEventListener("mouseout", hideTip);
     gE.appendChild(p);
   });
   svg.appendChild(gE);
+  // Stage A 源分标签层（在节点之下、边之上）
+  const gL=el("g",{}); gL.setAttribute("id","srcLabels"); svg.appendChild(gL);
 
   // 节点
   const gN=el("g",{});
@@ -223,6 +245,10 @@ function select(id){
     p.classList.toggle("hot", (e.src===id||e.dst===id));
   });
   renderPanel(id, ups, downs);
+  // 预取该节点的选源结果（只填服务端缓存，不覆盖详情面板）——点按钮时即可秒显
+  const qv = (document.getElementById("q").value || "").trim();
+  if(qv){ fetch(`/api/stage_a?node=${encodeURIComponent(id)}&q=${encodeURIComponent(qv)}`)
+    .then(r=>r.json()).catch(()=>{}); }
 }
 
 function renderPanel(id, ups, downs){
@@ -249,6 +275,74 @@ function renderPanel(id, ups, downs){
   `;
 }
 
+/* ---------- Stage A 选源（可视化 P1） ---------- */
+let SA = null;   // 最近一次选源结果
+
+async function runStageA(nodeId){
+  const q = (document.getElementById("q").value || "").trim();
+  const btn = document.getElementById("saBtn");
+  if(!nodeId){ alert("先点击一个节点作为「当前节点」"); return; }
+  if(!q){ alert("请先在输入框填写查询"); return; }
+  btn.disabled = true; btn.textContent = "计算中…";
+  try{
+    const r = await fetch(`/api/stage_a?node=${encodeURIComponent(nodeId)}&q=${encodeURIComponent(q)}`)
+      .then(x=>x.json());
+    if(!r.ok){ throw new Error(r.error || "失败"); }
+    SA = r.stage_a;
+    paintStageA();
+  }catch(e){
+    alert("选源计算失败：" + e.message);
+  }finally{
+    btn.disabled = false; btn.textContent = "计算选源";
+  }
+}
+
+function paintStageA(){
+  // 清掉上一次
+  document.querySelectorAll("#srcLabels").forEach(g=>{ while(g.firstChild) g.removeChild(g.firstChild); });
+  document.querySelectorAll(".node").forEach(g=>g.classList.remove("src"));
+  document.querySelectorAll(".edge").forEach(p=>p.classList.remove("srcEdge"));
+  if(!SA){ renderPanel(SEL, [], []); return; }
+  const labs = document.getElementById("srcLabels");
+  SA.sources.forEach(s=>{
+    document.querySelectorAll(`.node[data-id="${s.node_id}"]`).forEach(g=>g.classList.add("src"));
+    // 把 src_score 标在该源指向当前节点的边上（取中点略上移）
+    document.querySelectorAll(`.edge[data-src="${s.node_id}"][data-dst="${SA.cur_node}"]`).forEach(p=>{
+      p.classList.add("srcEdge");
+      const t = el("text",{x:+p.dataset.mx, y:+p.dataset.my-8, class:"slabel",
+        "text-anchor":"middle"});
+      t.textContent = `src ${s.src_score.toFixed(2)}`;
+      labs.appendChild(t);
+    });
+  });
+  renderStagePanel();
+}
+
+function renderStagePanel(){
+  const box = document.getElementById("panel");
+  if(!SA){ return; }
+  const rows = SA.sources.map(s=>`
+    <div class="elist" title="strength=静态边强度 relevance=query×节点 src_score=λ融合">
+      <b style="min-width:78px">${s.node_id}</b>
+      <span class="bar"><i style="width:${Math.round(s.src_score*100)}%;background:#e08a3c"></i></span>
+      <span style="white-space:nowrap">${s.src_score.toFixed(3)}</span>
+      <span style="color:#94a3b8;white-space:nowrap">${s.quota>0?("配额 "+s.quota):"软偏置"}</span>
+    </div>
+    <div style="font-size:10.5px;color:#8aa39a;margin:-2px 0 6px 84px">
+      strength ${s.strength.toFixed(3)} · relevance ${s.relevance.toFixed(3)}
+    </div>`).join("");
+  box.innerHTML = `
+    <h2>Stage A 选源（实算）</h2>
+    <div class="topic">${SA.cur_node}</div>
+    <div class="meta">查询：${SA.query}<br>模式 ${SA.mode} · λ=${SA.lambda}（strength 与 relevance 的融合比）</div>
+    <h3>入选源（${SA.sources.length}）</h3>
+    ${rows || '<div class="empty">无上游源（图根节点）</div>'}
+    <div style="font-size:11px;color:#8aa39a;margin-top:10px;line-height:1.6">
+      橙色节点与流动虚线 = 本轮入选的上游源；边上数字为该源的 src_score。<br>
+      配额 = 该源在本轮注入中的带宽上限（多对多筛选的“带宽分配”）。
+    </div>`;
+}
+
 /* ---------- 边浮层 ---------- */
 function showTip(ev,e){
   tip.innerHTML=`<b>${e.src} → ${e.dst}</b><br>${TYPE_LABEL[e.type]||e.type} · 强度 ${(e.strength||0).toFixed(2)}`
@@ -270,6 +364,11 @@ async function boot(){
   draw();
   const st=document.getElementById("floattip");
   st.textContent += `　|　数据来源：${G.source==="runtime"?"演示运行时图":"消融数据集固定图"}　|　节点 ${G.nodes.length} · 边 ${G.edges.length}`;
+  // 预填一条链式依赖查询（最能体现"选源"价值），点节点后一键算选源
+  const qEl = document.getElementById("q");
+  if(!qEl.value) qEl.value = "演示服务上线前需要确认哪些前置条件";
+  document.getElementById("saBtn").addEventListener("click", ()=>runStageA(SEL));
+  qEl.addEventListener("keydown", e=>{ if(e.key==="Enter") runStageA(SEL); });
 }
 boot();
 </script>
