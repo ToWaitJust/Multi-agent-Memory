@@ -1,0 +1,35 @@
+# graph_g4_notime.yaml —— 诊断组：G4 关掉 time 维（D-049 LoCoMo 真实数据诊断）
+#
+# 动机（真实数据集上的实测疑问）：
+#   LoCoMo conv0 上 G4(recall 0.2033) ≈ G1 邻域全量(0.195)，算法层几乎没有增益。
+#   假设：time 维在真实数据上是**有害**的 ——
+#     LoCoMo 的 session 时间跨度长达数月，time = exp(-0.01·Δt_hours) 会系统性
+#     偏向"时间上更晚"的记忆，而**答案往往在早期的 session 里**（问题问的是过去的事）。
+#   这与 D-034 的机制同源（time 是绝对年龄，不是相关性），但此前只在合成的 S-C 上验证过，
+#   且当时"禁用 time 也伤害了 S-A"，结论是"整体不禁用"。本组在**真实数据集**上重验。
+#
+# 与 graph_g4 的唯一差异：attention_disabled_dims
+retriever_impl: retriever.vector
+attention_impl: attention.full
+weight_impl:    weight.full
+selector_impl:  selector.topk
+embedding_impl: embed.dashscope
+model_impl:     model.dashscope
+reward_impl:    reward.explicit
+conditioning_dims: [semantic, task]
+top_k: 8
+threshold: 0.0
+attention_disabled_dims: [time]        # ★ 与 graph_g4 的唯一差异
+graph:
+  enabled: true
+  source_mode: auto
+  depth: 1
+  source_topk: 3
+  quota_mode: strength
+  quota_lambda: 0.7
+  quota_tau: 0.5
+  min_quota: 1
+budget:
+  default_tier: fast
+  adaptive: false
+graph_provenance: "LoCoMo 真实数据集诊断组（analysis/locomo_adapter.py 产出）"
