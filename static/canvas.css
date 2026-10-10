@@ -27,13 +27,10 @@
    已删除。现在只保留下面的映射，主题完全跟随 app.css 的 [data-theme]。 */
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
   font:14px/1.6 "PingFang SC","Microsoft YaHei",sans-serif}
-header{display:flex;align-items:center;gap:14px;height:var(--hdr);padding:0 18px;
-  background:var(--glass);border-bottom:1px solid var(--glass-line);
-  backdrop-filter:blur(var(--glass-blur)) saturate(180%);
-  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(180%);
-  box-shadow:var(--shadow-1);white-space:nowrap;overflow:hidden}
-header h1{font-size:15px;margin:0;font-weight:600}
-header .back{color:var(--green);text-decoration:none;font-size:13px;flex:none}
+/* D-064：顶栏样式**统一用 app.css 的 .topbar**（canvas.html 的 header 已补上该类）。
+   这里原来自己写了一份 `header{...}`，与 .topbar 重复但**不含 .navlink / .navlink.on**
+   —— 结果顶栏布局看着正常，导航选中态却永远是"没选中"。
+   重复定义已删除，只保留画布页特有的 .legend（图例：主节点/下游节点/共享虚线）。 */
 .legend{margin-left:auto;display:flex;gap:16px;font-size:12px;color:var(--sub);overflow:hidden}
 .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
 /* 画布：占满剩余空间，节点可拖拽重排（超宽/超高用滚动条浏览） */
@@ -84,7 +81,7 @@ header .back{color:var(--green);text-decoration:none;font-size:13px;flex:none}
 [data-theme="dark"] .stage{background:
   radial-gradient(circle at 22% 14%, rgba(107,116,240,.10) 0%, transparent 58%)}
 [data-theme="dark"] .floattip{background:rgba(22,36,31,.92)}
-[data-theme="dark"] header{border-color:var(--line);background:var(--card)}
+[data-theme="dark"] .topbar{border-color:var(--line);background:var(--card)}
 
 /* ---------- D-057 画布页：背景压平 + 主题化 ---------- */
 /* body 的两团径向光斑是为控制台设计的，画布页整屏铺开反而刺眼

@@ -18,7 +18,10 @@
 <link rel="stylesheet" href="/static/canvas.css">
 </head>
 <body>
-<header>
+<!-- D-064：header 必须带 .topbar —— app.css 的导航样式（含 .navlink.on 选中态）
+     全部挂在 .topbar 下；这里原来是裸 <header>，靠 canvas.css 自己的 header{}
+     兜住了布局，所以"看着没坏"，但选中态/亮色/高对比覆盖全都不生效。 -->
+<header class="topbar">
   <a class="navlink" href="/">控制台</a>
   <a class="navlink on" href="/canvas">会话画布</a>
   <a class="navlink" href="/graph">图拓扑</a>
