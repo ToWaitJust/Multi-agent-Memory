@@ -54,13 +54,13 @@ DEMO_CORPUS = [
     ("LLM 可学习权重经 MLP 融合先验与学习信号，α=0.6 β=0.4", "weight", 24.0, 2),
     ("ReMe 原生记忆管理：自动记忆与检索原语", "reme", 48.0, 1),
     ("DashScope text-embedding-v4 输出 1024 维语义向量", "embedding", 10.0, 4),
-    ("共享池约束：精选 ≤10 条高相关记忆注入副线 workspace", "share", 1.0, 6),
+    ("共享记忆约束：精选 ≤10 条高相关记忆注入下游节点上下文", "share", 1.0, 6),
     ("faiss 向量索引支持余弦相似度快速检索", "retrieval", 12.0, 2),
     ("消融实验五组：naive / reme / +attention / +weight / full_ours", "ablation", 72.0, 1),
-    ("双池架构：常驻完整池与共享池解耦，主副线逻辑隔离", "architecture", 3.0, 3),
+    ("双池架构：节点私有记忆与共享记忆解耦，节点间逻辑隔离", "architecture", 3.0, 3),
 ]
 
-DEFAULT_QUERY = "多智能体记忆共享调度如何为副线精选高相关记忆并注入 LLM？"
+DEFAULT_QUERY = "多智能体记忆共享调度如何为下游节点精选高相关记忆并注入 LLM？"
 
 
 def build_trace(config_name: str, query: str, corpus) -> dict:
@@ -279,7 +279,7 @@ def _call_llm_answer(model_impl: str, prompt: str):
         "调度系统先由向量检索器从常驻完整池召回候选记忆，再用四维注意力"
         "（时间/语义/频率/任务）逐条打分，并以「α·LLM先验 + β·可学习权重」"
         "混合得到动态权重，最终按分数排序精选 ≤10 条高相关记忆写入共享池，"
-        "注入副线 LLM 上下文。相比把全部记忆直接塞入上下文，本方法显著压缩了"
+        "注入下游节点的 LLM 上下文。相比把全部记忆直接塞入上下文，本方法显著压缩了"
         "token 占用、突出高相关记忆，从而提升回答质量与效率。"
     )
     return synth, False

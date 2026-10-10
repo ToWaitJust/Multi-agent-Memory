@@ -1,4 +1,4 @@
-"""Stage A：选源（§4.1）—— 图相对主副线**唯一新增的算法含量**。
+"""Stage A：选源（§4.1）—— 图相对主下游节点**唯一新增的算法含量**。
 
 管线：
     邻域展开(depth) → 版本折叠 → 环降级边排除 → 源打分 → 源裁剪(topk) → 配额/偏置
@@ -78,6 +78,29 @@ class SourceSelector:
                     pairs.append((real, None))
         else:
             pairs = list(neigh)
+            # ①′ 语义源扩展（D-051）：图邻域之外的语义近邻也纳入候选源池。
+            #   动机：LoCoMo 实测「入边邻居恒为 3」（建边 top-3 所致），source_topk=3 等于全选
+            #   → src_score 从未参与选择（λ/topk/方差阈值调遍，src_hit 恒 0.2744）。
+            #   oracle 选源 recall 0.9029 vs 实际 0.2303，瓶颈压倒性地在**选源可达性**。
+            #   实测上界：语义 top-3 覆盖 67.7%、top-5 覆盖 80.6%（Jaccard 建边 top-3 仅 32.3%）。
+            #   语义扩展**不取代图**：邻域节点仍带 typed 边强度（derives_from 等硬关系），
+            #   语义近邻 strength=0，只靠 relevance 进入候选，两者在 src_score 里公平竞争。
+            sem_k = int(getattr(c, "semantic_source_topk", 0) or 0)
+            if sem_k > 0 and query_emb is not None:
+                have = {nid for nid, _ in pairs} | {cur}
+                scored = []
+                for node in self.store.nodes():
+                    nid = folded.get(node.node_id, node.node_id)
+                    if nid in have or nid == cur:
+                        continue
+                    r = cosine(node.emb, query_emb)
+                    if r is None:
+                        continue
+                    scored.append((r, nid))
+                scored.sort(key=lambda x: -x[0])
+                for _r, nid in scored[:sem_k]:
+                    pairs.append((nid, None))      # None = 无图边，strength 视为 0
+                sel.semantic_expanded = [nid for _r, nid in scored[:sem_k]]
 
         if not pairs:
             sel.reason = "邻域为空（无 active 上游边）"

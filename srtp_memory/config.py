@@ -20,7 +20,7 @@ class GraphConfig(BaseModel):
     source_topk: int = 3              # 最多取几个源
     #: ~~D-028~~ **已撤销**：邻域源数 ≤ 此值时不做 top-k 裁剪。
     #: 撤销原因（F1 实测）：① 对 G3/G4 零收益 —— n_paper 被裁掉的 n_deploy(0.3 弱边) 里
-    #:   根本没有相关记忆；② **破坏实验对照** —— source_topk=1 的 G2（主副线等价物）
+    #:   根本没有相关记忆；② **破坏实验对照** —— source_topk=1 的 G2（主下游节点等价物）
     #:   被绕过而取了全部 4 个源，"单源"语义失效，S-C 的 G2 vs G3 对比不再成立。
     #: 保留字段并默认 0（关闭），仅为将来在**大图**（源数 >8）场景重新评估留口子。
     source_topk_full_cover: int = 0
@@ -35,6 +35,13 @@ class GraphConfig(BaseModel):
     strength_min: float = 0.0         # 邻域展开的边强度下限
     summary_refresh_n: int = 20       # summary 重算触发：新增记忆数
     rel_var_threshold: float = 0.02   # 占位值，待附录 B 标定
+    #: D-051：语义源扩展 —— 图邻域之外，再按 cos(emb(topic), emb(q)) 补进 N 个候选源。
+    #: 默认 0（关闭，行为与改动前完全一致，保证既有消融结论可复现）。
+    #: 背景：LoCoMo 实测入边邻居恒为 3（建边 top-3 所致）→ source_topk=3 等于全选
+    #:   → src_score 从未参与选择（src_hit 恒 0.2744）；oracle 选源 recall 0.9029 vs 实际 0.2303。
+    #:   实测上界：语义 top-3 覆盖 67.7%、top-5 覆盖 80.6%（Jaccard 建边 top-3 仅 32.3%）。
+    #: 注意：语义近邻的 strength 视为 0，只靠 relevance 竞争，不篡改图边强度语义。
+    semantic_source_topk: int = 0
     # ---- D-036（F2）：多因素边强度权重 ----
     # strength = clamp01(bias + Σ wᵢ·fᵢ)。默认只给 f_topic 权重 → **退化为现状**（向后兼容）；
     # 给 f_interact 权重即启用"行为证据"（记忆被下游调度真实引用过多少次）。

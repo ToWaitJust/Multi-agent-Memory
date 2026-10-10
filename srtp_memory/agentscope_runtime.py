@@ -1,13 +1,13 @@
-"""主副线运行时（真实 AgentScope 接入点，§4.8 / D3）。
+"""主下游节点运行时（真实 AgentScope 接入点，§4.8 / D3）。
 
-SchedulingRuntime 统一封装「主副线」执行，对外暴露与具体后端无关的接口：
-- main_answer(query, kept_texts)：主线智能体基于共享池精选记忆作答。
-- sub_lines(query, kept_texts, main_answer, run_sub)：副线隔离 workspace 的书签 +
-  （可选）真实副线 Agent 的侧任务产物。
+SchedulingRuntime 统一封装「主下游节点」执行，对外暴露与具体后端无关的接口：
+- main_answer(query, kept_texts)：主节点智能体基于共享池精选记忆作答。
+- sub_lines(query, kept_texts, main_answer, run_sub)：下游节点隔离 workspace 的书签 +
+  （可选）真实下游节点 Agent 的侧任务产物。
 
 后端选择（启动时定一次，页面标注 agent_mode）：
-- agentscope：环境装有 agentscope 且 DeepSeek key 可用时，主线/副线用真实 AgentScope
-  2.0.6 Agent 实例驱动（每个副线 Agent 独立实例 = 逻辑隔离沙箱，D3）。
+- agentscope：环境装有 agentscope 且 DeepSeek key 可用时，主节点/下游节点用真实 AgentScope
+  2.0.6 Agent 实例驱动（每个下游节点 Agent 独立实例 = 逻辑隔离沙箱，D3）。
 - headless：缺 agentscope 或缺 key 时，降级为 headless 中间件（仍是真实 DashScope
   embedding + DeepSeek LLM，仅「Agent 编排层」用我们自己的适配器），页面标注清楚。
 
@@ -45,15 +45,15 @@ else:
     TextBlock = None
 
 
-# 副线规格（书签定位 + 隔离 workspace，FR-8 / D3）
+# 下游节点规格（书签定位 + 隔离 workspace，FR-8 / D3）
 SUB_LINE_SPECS = [
-    ("sub1", "检索副线", "基于共享池记忆做一条补充侧摘（≤2 句），与主回答互补。"),
-    ("reviewer", "校验副线", "基于共享池记忆对主线回答做一致性校验（≤2 句），指出偏差。"),
+    ("sub1", "检索下游节点", "基于共享池记忆做一条补充侧摘（≤2 句），与主回答互补。"),
+    ("reviewer", "校验下游节点", "基于共享池记忆对主节点回答做一致性校验（≤2 句），指出偏差。"),
 ]
 
 
 class SchedulingRuntime:
-    """主副线执行运行时（单例，随中间件一同懒初始化）。"""
+    """主下游节点执行运行时（单例，随中间件一同懒初始化）。"""
 
     def __init__(self, middleware, config: SchedulingConfig):
         self.mid = middleware
@@ -73,7 +73,7 @@ class SchedulingRuntime:
     # 真实 AgentScope 装配（best-effort，失败即降级）
     # ------------------------------------------------------------------ #
     def _build_agentscope(self) -> None:
-        """用 AgentScope 2.0.6 真实原语装配主/副线 Agent。
+        """用 AgentScope 2.0.6 真实原语装配主/下游节点 Agent。
 
         2.0.6 关键差异（与旧文档/示例不符，已实测）：
         - 没有 agentscope.init、没有 agentscope.agents 模块、没有 DialogAgent。
@@ -131,11 +131,11 @@ class SchedulingRuntime:
             "不要假装完成。普通记忆问答直接回答即可，无需调用工具。"
         )
 
-        # 主线 Agent：共享池记忆作为上下文注入系统提示
+        # 主节点 Agent：共享池记忆作为上下文注入系统提示
         self._agents["main"] = Agent(
             name="MainAgent",
             system_prompt=(
-                "你是多智能体记忆共享调度系统的【主线智能体】。你拥有常驻完整记忆池的"
+                "你是多智能体记忆共享调度系统的【主节点智能体】。你拥有常驻完整记忆池的"
                 "全量只读上下文，并会收到调度层从共享池精选注入的高相关记忆。请仅基于"
                 "这些记忆简洁作答，不要编造记忆中没有的信息；记忆不足时如实说明。\n"
                 + tool_hint
@@ -144,12 +144,12 @@ class SchedulingRuntime:
             toolkit=_make_toolkit(),
             state=_make_state(),
         )
-        # 副线 Agent：各自独立实例 = 逻辑隔离沙箱（D3），只吃共享池记忆
+        # 下游节点 Agent：各自独立实例 = 逻辑隔离沙箱（D3），只吃共享池记忆
         self._agents["sub1"] = Agent(
             name="SubAgent-sub1",
             system_prompt=(
-                "你是【检索副线】智能体，运行在隔离 workspace。你只看到调度层注入的共享池"
-                "精选记忆，看不到主线全量上下文。请基于这些记忆生成一条补充侧摘（≤2 句）。\n"
+                "你是【检索下游节点】智能体，运行在隔离 workspace。你只看到调度层注入的共享池"
+                "精选记忆，看不到主节点全量上下文。请基于这些记忆生成一条补充侧摘（≤2 句）。\n"
                 + tool_hint
             ),
             model=model,
@@ -159,8 +159,8 @@ class SchedulingRuntime:
         self._agents["reviewer"] = Agent(
             name="SubAgent-reviewer",
             system_prompt=(
-                "你是【校验副线】智能体，运行在隔离 workspace。你只看到调度层注入的共享池"
-                "精选记忆与主线回答。请基于记忆对主线回答做一致性校验（≤2 句），指出可能的偏差。\n"
+                "你是【校验下游节点】智能体，运行在隔离 workspace。你只看到调度层注入的共享池"
+                "精选记忆与主节点回答。请基于记忆对主节点回答做一致性校验（≤2 句），指出可能的偏差。\n"
                 + tool_hint
             ),
             model=model,
@@ -169,10 +169,10 @@ class SchedulingRuntime:
         )
 
     # ------------------------------------------------------------------ #
-    # 主线回答
+    # 主节点回答
     # ------------------------------------------------------------------ #
     def main_answer(self, query: str, kept_texts: list[str]) -> str:
-        """主线智能体基于共享池记忆作答，返回完整文本。"""
+        """主节点智能体基于共享池记忆作答，返回完整文本。"""
         ctx = "\n".join(f"- {t}" for t in kept_texts[:8]) or "（本轮无保留记忆）"
         if self.mode == "agentscope":
             try:
@@ -203,14 +203,51 @@ class SchedulingRuntime:
         return "(未配置 LLM，跳过回答生成)"
 
     # ------------------------------------------------------------------ #
-    # 副线（书签 + 可选真实副线 Agent）
+    # 下游节点（书签 + 可选真实下游节点 Agent）
     # ------------------------------------------------------------------ #
+    def answer_prompt(self, query: str, kept_texts: list[str]) -> str:
+        """组装回答用的 prompt（`main_answer` 与 `main_answer_stream` 共用同一份口径）。
+
+        抽成方法是必要的：流式与非流式若各写一份 prompt，很快会出现
+        "两个界面回答不一致"这种难以定位的问题。
+        """
+        ctx = "\n".join(f"- {t}" for t in kept_texts[:8]) or "（本轮无保留记忆）"
+        return (f"【共享池精选记忆】\n{ctx}\n\n"
+                f"【用户问题】{query}\n请基于以上记忆回答。")
+
+    def main_answer_stream(self, query: str, kept_texts: list[str]):
+        """**真**流式产出主节点回答（D-054）：yield 文本片段，边生成边推给界面。
+
+        与 `main_answer` 的差别是**不再"先算完再切片"** —— 之前那叫假打字机，
+        界面会整段蹦出来。现在走 LLM 的 `stream=True`，模型吐一段就推一段。
+
+        AgentScope 路径的 `agent.reply` 是非流式且为 async，无法逐字，
+        该分支降级为一次性产出（但仍在生成后切片推送，观感不倒退）。
+        """
+        if self.mode == "agentscope":
+            for chunk in _slice_for_stream(self.main_answer(query, kept_texts)):
+                yield chunk
+            return
+        client = _get_llm_client(self.mid)
+        if not client:
+            yield "(未配置 LLM，跳过回答生成)"
+            return
+        try:
+            # thinking=False：与 main_answer 保持一致，回答正文不该夹带 reasoning
+            for chunk in client.complete_stream(self.answer_prompt(query, kept_texts),
+                                                max_tokens=512, temperature=0.3,
+                                                thinking=False):
+                if chunk:
+                    yield chunk
+        except Exception as e:  # noqa: BLE001 - 流式失败也要给界面一个交代
+            yield f"(LLM 流式调用失败：{type(e).__name__})"
+
     def sub_lines(self, query: str, kept_texts: list[str],
                   main_answer: str, run_sub: bool) -> list[dict]:
-        """返回副线列表：每个含 name/role/desc/injected(共享记忆)/note(可选侧任务产物)。
+        """返回下游节点列表：每个含 name/role/desc/injected(共享记忆)/note(可选侧任务产物)。
 
-        run_sub=False 时只产出架构书签（展示「副线吃共享池」的运作，不耗 token）；
-        run_sub=True 且有真实 LLM/Agent 时，额外调用副线 Agent 生成 note。
+        run_sub=False 时只产出架构书签（展示「下游节点吃共享池」的运作，不耗 token）；
+        run_sub=True 且有真实 LLM/Agent 时，额外调用下游节点 Agent 生成 note。
         """
         items: list[dict] = []
         ctx = "\n".join(f"- {t}" for t in kept_texts[:8]) or "（本轮无保留记忆）"
@@ -238,7 +275,7 @@ class SchedulingRuntime:
             if name == "reviewer":
                 prompt = (
                     f"【共享池精选记忆】\n{ctx}\n\n"
-                    f"【主线回答】{main_answer}\n请基于记忆校验主线回答一致性（≤2 句）。"
+                    f"【主节点回答】{main_answer}\n请基于记忆校验主节点回答一致性（≤2 句）。"
                 )
             else:
                 prompt = (
@@ -248,7 +285,7 @@ class SchedulingRuntime:
             msg = asyncio.run(agent.reply(UserMsg(name="User", content=prompt)))
             text = _extract_text(msg)
             return text.strip() or None
-        except Exception:  # noqa: BLE001 - 副线失败不影响主线
+        except Exception:  # noqa: BLE001 - 下游节点失败不影响主节点
             return None
 
 
@@ -276,13 +313,13 @@ def _get_llm_client(mid):
 def _sub_note_headless(client, name: str, ctx: str, query: str, main_answer: str) -> Optional[str]:
     if name == "reviewer":
         prompt = (
-            "你是校验副线智能体。请仅基于下列共享池记忆，对主线回答做一致性校验（≤2 句），"
+            "你是校验下游节点智能体。请仅基于下列共享池记忆，对主节点回答做一致性校验（≤2 句），"
             "指出可能的偏差或遗漏。\n【共享池记忆】\n" + ctx +
-            "\n\n【主线回答】" + main_answer
+            "\n\n【主节点回答】" + main_answer
         )
     else:
         prompt = (
-            "你是检索副线智能体。请仅基于下列共享池记忆，生成一条与主回答互补的补充侧摘"
+            "你是检索下游节点智能体。请仅基于下列共享池记忆，生成一条与主回答互补的补充侧摘"
             "（≤2 句），不要重复主回答已说的内容。\n【共享池记忆】\n" + ctx +
             "\n\n【用户问题】" + query
         )
@@ -291,3 +328,15 @@ def _sub_note_headless(client, name: str, ctx: str, query: str, main_answer: str
         return text.strip() or None
     except Exception:  # noqa: BLE001
         return None
+
+
+def _slice_for_stream(text: str, size: int = 6):
+    """把一次性产出的文本切片后逐段 yield（仅用于无法流式的降级分支）。
+
+    size=6 而不是 4：降级路径本来就是"假流式"，切片大一点反而更自然。
+    """
+    if not text:
+        yield ""
+        return
+    for i in range(0, len(text), size):
+        yield text[i:i + size]

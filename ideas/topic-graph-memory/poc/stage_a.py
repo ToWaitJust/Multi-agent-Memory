@@ -1,7 +1,7 @@
 """POC Stage A：选源（01_idea_draft.md §5 的最小实现，纯离线、零 LLM）。
 
 - G1  图 + 均匀：邻域全部源，配额均分，不打分
-- G2  图 + 单源：只取边强度最高的 1 个源（= 主副线等价物）
+- G2  图 + 单源：只取边强度最高的 1 个源（= 主下游节点等价物）
 - G3  多源 + 四维：top-k 源，配额均匀
 - G4  full-ours：top-k 源，src_score = λ·strength + (1−λ)·rel，配额按 softmax(src_score)，
       配额语义 = **填充式**（每源保底占坑）
@@ -61,7 +61,7 @@ def select_sources(
         per = K // len(src_edges) or 1
         return {e.src: per for e in src_edges}
 
-    if group == "G2":                                   # 图 + 单源（主副线等价物）
+    if group == "G2":                                   # 图 + 单源（主下游节点等价物）
         best = max(src_edges, key=lambda e: e.strength)
         return {best.src: K}
 

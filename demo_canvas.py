@@ -1,6 +1,6 @@
-"""演示画布的主副线模拟数据：一个问答回合 = 一个节点。
+"""演示画布的节点/共享模拟数据：一个问答回合 = 一个节点。
 
-- build_demo() 生成主线 6 轮 + 3 条副线（各自 2-3 轮）的模拟聊天记录；
+- build_demo() 生成主节点 6 轮 + 3 个下游节点（各自 2-3 轮）的模拟聊天记录；
 - load_or_create() 落盘 data/demo/canvas_history.json，重启后历史仍在；
 - append_round() 把画布里的新追问追加进历史（演示时可现场长出节点）；
 - CANVAS_MEMORY_SEEDS 把聊天内容抽成记忆，随 _get_mid() 灌进常驻池 → 调度可召回。
@@ -37,9 +37,9 @@ def build_demo() -> dict:
                       "（轻量 LLM）。检索侧用 faiss-cpu 做 ANN 索引，环境是 conda 的 srtp-memory（Python 3.13）。"},
         {"round_id": "R2", "title": "双池架构", "ts": base + step,
          "user": "双池架构是怎么设计的？",
-         "assistant": "主线 MainAgent 挂常驻完整池（全量只读），副线 SubAgent 用隔离沙箱，"
+         "assistant": "主节点挂自己的私有记忆（全量只读）；下游节点通过跨节点共享拿到上游精选记忆，"
                       "只注入共享池精选的 ≤10 条记忆。调度中间件挂在 ReMe 之前：on_reply 先调度、"
-                      "把入选记忆以 HintBlock 注入上下文，保证副线回答不脱离记忆库。"},
+                      "把入选记忆注入上下文，保证下游节点回答不脱离记忆库。"},
         {"round_id": "R3", "title": "四维打分与权重", "ts": base + 2 * step,
          "user": "四维注意力是怎么打分的？权重怎么混合？",
          "assistant": "四个维度：time 指数衰减、semantic（余弦+向量+BM25 原始分融合）、"
@@ -57,13 +57,13 @@ def build_demo() -> dict:
                       "注意归因问题：五组检索基座要统一，否则增量会混入检索器变化。"},
         {"round_id": "R6", "title": "下一步计划", "ts": base + 5 * step,
          "user": "下一步计划是什么？",
-         "assistant": "两条线：主线先修复消融退化（offline 下 naive≡reme、+attn≡+weight），"
+         "assistant": "两个方向：先修复消融退化（offline 下 naive≡reme、+attn≡+weight），"
                       "换在线模式重跑 200 episodes；同时 topic 图 idea 已开独立工作区做 POC 验证，"
                       "真实数据上多源调度已跑赢单源。"},
     ]
 
     subs = [
-        {"session_id": "sub_weight", "derived_from": "R3", "title": "副线 · 权重训练",
+        {"session_id": "sub_weight", "derived_from": "R3", "title": "下游节点 · 权重训练",
          "inherited": [
              "四维打分：time 指数衰减 / semantic 余弦+向量+BM25 / frequency 访问数 / task 标签匹配",
              "混合权重 final = α·LLM先验 + β·MLP，α=0.6 β=0.4 固定保归因干净",
@@ -72,10 +72,10 @@ def build_demo() -> dict:
          ],
          "rounds": [
              {"round_id": "S1-1", "title": "训练目标", "ts": base + 2.2 * step,
-              "user": "副线任务启动：把可学习权重模型训出来。",
-              "assistant": "从主线继承了相关记忆（四维打分定义、混合权重公式 α·先验+β·MLP）。"
+              "user": "下游节点任务：把可学习权重模型训出来。",
+              "assistant": "共享自上游节点的相关记忆（四维打分定义、混合权重公式 α·先验+β·MLP）。"
                            "本线独立推进：训练目标定为 MSE 蒸馏 LLM 先验权重（多次采样平均做标签），"
-                           "加正则防偏离先验；不动 α 和主线模型。"},
+                           "加正则防偏离先验；不动 α 和共享侧模型。"},
              {"round_id": "S1-2", "title": "训练集", "ts": base + 2.6 * step,
               "user": "训练集从哪来？",
               "assistant": "按权重训练集标注规范：真实交互 + 模拟生成，蒸馏标签取 LLM 先验的"
@@ -85,7 +85,7 @@ def build_demo() -> dict:
               "assistant": "点赞/点踩 = reward(+1/-1)，bandit 式奖励加权；只更新 condition 对应"
                            "切片（语义/任务头），时间/频率保持全局。"},
          ]},
-        {"session_id": "sub_ablation", "derived_from": "R4", "title": "副线 · 消融数据集",
+        {"session_id": "sub_ablation", "derived_from": "R4", "title": "下游节点 · 消融数据集",
          "inherited": [
              "消融 5 组：baseline_naive / baseline_reme / +attention / +weight / full_ours，YAML 唯一真源",
              "消融数据集：确定性合成 200 行带 ground-truth；计划 AgentScope 自建多模块真实语料",
@@ -94,8 +94,8 @@ def build_demo() -> dict:
          ],
          "rounds": [
              {"round_id": "S2-1", "title": "数据集构建", "ts": base + 3.2 * step,
-              "user": "副线任务启动：把消融数据集做出来。",
-              "assistant": "从主线继承了消融 5 组设计与指标口径的记忆。本线产出：确定性合成"
+              "user": "下游节点任务：把消融数据集做出来。",
+              "assistant": "共享自上游节点的消融 5 组设计与指标口径记忆。本节点产出：确定性合成"
                            "生成器 200 行带 ground-truth；后续计划用 AgentScope 多模块项目场景"
                            "自建真实语料（todo-cli 场景已跑通）。"},
              {"round_id": "S2-2", "title": "标注口径", "ts": base + 3.6 * step,
@@ -103,7 +103,7 @@ def build_demo() -> dict:
               "assistant": "锚点关键词 + 人工抽检。教训：相关集一旦超过注入上限 K，所有组的"
                            "recall 都被 10/|relevant| 天花板压死——标注必须与 |relevant| ≤ K 校验联动。"},
          ]},
-        {"session_id": "sub_retriever", "derived_from": "R5", "title": "副线 · 检索器对比",
+        {"session_id": "sub_retriever", "derived_from": "R5", "title": "下游节点 · 检索器对比",
          "inherited": [
              "检索器决策：full_ours 用 retriever.vector（真实 DashScope embedding + 落盘缓存可复现）",
              "BM25 中文场景必须 jieba 分词，否则召回接近随机、对照组失真",
@@ -111,8 +111,8 @@ def build_demo() -> dict:
          ],
          "rounds": [
              {"round_id": "S3-1", "title": "对比实验", "ts": base + 4.2 * step,
-              "user": "副线任务启动：把 bm25 和 vector 比清楚。",
-              "assistant": "从主线继承了检索器决策与 embedding 缓存机制的记忆。本线独立跑对比："
+              "user": "下游节点任务：把 bm25 和 vector 比清楚。",
+              "assistant": "共享自上游节点的检索器决策与 embedding 缓存记忆。本节点独立跑对比："
                            "中文场景 bm25 依赖分词质量，向量检索对同义改写更稳，两者是可组合的插件原语。"},
              {"round_id": "S3-2", "title": "jieba 结论", "ts": base + 4.5 * step,
               "user": "分词器结论？",
@@ -125,7 +125,7 @@ def build_demo() -> dict:
          ]},
     ]
 
-    return {"main": {"session_id": "canvas_main", "title": "主线 · SRTP 项目推进",
+    return {"main": {"session_id": "canvas_main", "title": "主节点 · SRTP 项目推进",
                      "rounds": main_rounds},
             "subs": subs, "saved_at": time.strftime("%F %T")}
 
@@ -134,8 +134,8 @@ def build_demo() -> dict:
 CANVAS_MEMORY_SEEDS = [
     ("mc_r1a", "技术栈定型：AgentScope 2.0.6 + ReMe 0.4.1.6 + DashScope text-embedding-v4（1024 维）+ DeepSeek", "tech_stack", 72),
     ("mc_r1b", "运行环境：Python 3.13 conda srtp-memory，faiss-cpu 做 ANN 检索", "tech_stack", 72),
-    ("mc_r2a", "双池设计：主线常驻完整池只读，副线只注入共享池 ≤10 条精选记忆", "architecture", 60),
-    ("mc_r2b", "调度时机：中间件 on_reply 先调度，入选记忆以 HintBlock 注入副线上下文", "architecture", 60),
+    ("mc_r2a", "双池设计：节点私有记忆只读，共享侧只注入调度精选 ≤10 条记忆", "architecture", 60),
+    ("mc_r2b", "调度时机：中间件 on_reply 先调度，入选记忆注入下游节点上下文", "architecture", 60),
     ("mc_r3a", "四维打分：time 指数衰减 / semantic 余弦+向量+BM25 / frequency 访问数 / task 标签匹配", "architecture", 48),
     ("mc_r3b", "混合权重 final = α·LLM先验 + β·MLP，α=0.6 β=0.4 固定保归因干净", "architecture", 48),
     ("mc_s3a", "MLP 训练目标：MSE 蒸馏 LLM 先验权重，正则防偏离；反馈只更新 condition 切片", "research", 40),
@@ -153,7 +153,7 @@ CANVAS_MEMORY_SEEDS = [
     ("mc2_p03", "项目里程碑：真实 AgentScope 运行时接入，主/副/审三 Agent 装配 Toolkit 与 BYPASS 权限", "project", 500),
     ("mc2_p04", "项目里程碑：检索器升级为真实 DashScope embedding 语义向量检索 + 落盘缓存", "project", 400),
     ("mc2_p05", "项目里程碑：topic 图 idea POC 两轮跑通，真实数据上多源调度优于单源", "project", 300),
-    ("mc2_p06", "项目里程碑：演示控制台与会话画布上线，支持画布追问与创建副线", "project", 200),
+    ("mc2_p06", "项目里程碑：演示控制台与会话画布上线，支持追问与创建下游节点", "project", 200),
     ("mc2_p07", "工程约定：YAML 是唯一手写真源，manifest 一律由脚本生成禁止手改", "project", 500),
     ("mc2_p08", "工程约定：data/ 放实验数据，logs/ 放进程日志，两者严格分开", "project", 480),
     ("mc2_a01", "调度五阶段：召回候选(50) → 四维打分 → 混合权重 → 排序选择(≤10) → 共享池写入", "architecture", 300),
@@ -187,7 +187,7 @@ CANVAS_MEMORY_SEEDS = [
     ("mc2_t04", "DashScope 兼容端点：https://dashscope.aliyuncs.com/compatible-mode/v1，模型 qwen-plus", "tech_stack", 200),
     ("mc2_t05", "faiss 不可用时自动线性余弦兜底，管线不中断（D-11 降级链）", "tech_stack", 180),
     ("mc2_t06", "控制台启动：python app_dashboard.py，端口 8787，stdlib 零依赖", "tech_stack", 100),
-    ("mc2_t07", "会话画布数据：data/demo/canvas_history.json，追问与副线创建实时落盘", "tech_stack", 50),
+    ("mc2_t07", "会话画布数据：data/demo/canvas_history.json，追问与节点创建实时落盘", "tech_stack", 50),
     ("mc2_t08", "AgentScope 调用：asyncio.run(agent.reply(UserMsg(...)))，reply 是 async 方法", "tech_stack", 400),
     ("mc2_t09", "权限模式用 BYPASS；DONT_ASK 会把所有询问变成拒绝导致卡死", "tech_stack", 380),
     ("mc2_u01", "用户协作偏好：动手前逐项确认疑点，要求批判性审查而非顺从", "profile", 600),
@@ -195,11 +195,11 @@ CANVAS_MEMORY_SEEDS = [
     ("mc2_u03", "演示偏好：可视化要占满屏、字体不放大、UI 对齐整洁", "profile", 30),
     ("mc2_d01", "本周计划：完成 5 组消融在线重跑并产出 run_manifest", "daily", 48),
     ("mc2_d02", "近期阻塞：消融结果退化（naive≡reme、+attn≡+weight）待诊断", "daily", 24),
-    ("mc2_d03", "下午有组会，需要准备演示动线：控制台 → 画布 → 创建副线", "daily", 6),
+    ("mc2_d03", "下午有组会，需要准备演示动线：控制台 → 画布 → 创建下游节点", "daily", 6),
     ("mc2_d04", "天气不错，傍晚适合跑步放松", "daily", 30),
     ("mc2_d05", "团队周会定了下阶段目标：论文实验部分先行", "daily", 200),
     ("mc2_d06", "咖啡库存不足，记得补货", "daily", 500),
-    ("mc2_d07", "昨天把画布演示给师兄看过，反馈是副线继承机制讲得清楚", "daily", 20),
+    ("mc2_d07", "昨天把画布演示给师兄看过，反馈是跨节点记忆共享机制讲得清楚", "daily", 20),
     ("mc2_d08", "导师提醒：论文创新点表述要聚焦调度算法，图只是结构先验", "daily", 100),
     ("mc2_d09", "记得把 .env 的密钥注释检查一遍，绝不能进仓库", "daily", 400),
 ]
@@ -221,8 +221,14 @@ def load_or_create() -> dict:
     return data
 
 
-def append_round(session_id: str, user: str, assistant: str) -> dict:
-    """把画布新追问追加进历史并落盘；返回新回合。"""
+def append_round(session_id: str, user: str, assistant: str,
+                 detail: dict | None = None) -> dict:
+    """把画布新追问追加进历史并落盘；返回新回合。
+
+    `detail`（D-058）：可选的**调度明细**（四维打分 / 权重 / 候选），
+    一并存进该回合。用途：展示/分享时打开页面就能看到这一轮的调度证据，
+    而不必现场重新跑一遍 —— 右侧明细区不再是空的。
+    """
     data = load_or_create()
     sess = None
     if data["main"]["session_id"] == session_id:
@@ -235,14 +241,27 @@ def append_round(session_id: str, user: str, assistant: str) -> dict:
     if sess is None:
         raise ValueError(f"unknown session: {session_id}")
 
+    # ★ D-063：round_id 必须**去重**。
+    # 画布用 "session|round" 作为拖拽偏移的 key，一旦同一会话里出现两个相同
+    # round_id（历史上出现过重复的 R10），拖其中一个会带着另一个一起动，
+    # 且 querySelector 只会命中第一个 —— 表现为"拖了没反应 / 位置乱跳"。
     n = len(sess["rounds"])
+    exist = {r["round_id"] for r in sess["rounds"]}
     if sess is data["main"]:
         rid = f"R{n + 1}"
+        while rid in exist:
+            n += 1
+            rid = f"R{n + 1}"
     else:
         prefix = sess["rounds"][0]["round_id"].split("-")[0] if sess["rounds"] else "S"
         rid = f"{prefix}-{n + 1}"
+        while rid in exist:
+            n += 1
+            rid = f"{prefix}-{n + 1}"
     rnd = {"round_id": rid, "title": (user[:8] + "…") if len(user) > 8 else user,
            "ts": time.time(), "user": user, "assistant": assistant}
+    if detail:
+        rnd["detail"] = detail
     sess["rounds"].append(rnd)
     data["saved_at"] = time.strftime("%F %T")
     HISTORY_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2),
@@ -251,7 +270,7 @@ def append_round(session_id: str, user: str, assistant: str) -> dict:
 
 
 def create_sub(title: str, derived_from: str, first_round: dict) -> tuple[dict, dict]:
-    """创建新副线（独立可问答线路）：继承源 = 主线回合，第一回合由调用方（真实调度）产出。
+    """创建下游节点（独立可问答）：共享来源 = 上游回合，第一回合由调用方（真实调度）产出。
 
     first_round 需含 user/assistant；inherited（继承的记忆文本列表）挂在会话上供画布展示。
     返回 (新会话, 第一回合)。
@@ -268,10 +287,15 @@ def create_sub(title: str, derived_from: str, first_round: dict) -> tuple[dict, 
     return sess, sess["rounds"][0]
 
 
-def save_layout(positions: dict) -> dict:
-    """保存节点拖拽后的位置偏移 {session|round: {dx,dy}}，落盘。"""
+def save_layout(positions: dict, reset: bool = False) -> dict:
+    """保存节点拖拽后的位置偏移 {session|round: {dx,dy}}，落盘。
+
+    `reset=True`（D-063）：先清空已有偏移再写入，用于「恢复默认布局」。
+    """
     data = load_or_create()
     lay = data.setdefault("layout", {})
+    if reset:
+        lay.clear()
     lay.update(positions or {})
     data["saved_at"] = time.strftime("%F %T")
     HISTORY_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2),

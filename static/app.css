@@ -1,135 +1,596 @@
 /* ============================================================================
-   SRTP 可视化 · 共享设计系统
-   三个视图（控制台 / 会话画布 / 图拓扑）共用这一套令牌与组件，
-   避免每个 HTML 各写一套样式（此前 graph/dashboard/canvas 三份 CSS 重复）。
+   SRTP 可视化 · 共享设计系统 v2（D-057 科技感升级）
+
+   相比 v1 的三处根本变化：
+   1. 色彩：绿松石 → **靛蓝主色 + 电光青强调**，**暗色为默认**（科技感最好的载体），
+      亮色保留并同样按新色相重算。语义色与四类边色同步调整，两种主题下对比度都够。
+   2. 毛玻璃：顶栏/卡片/图例/侧栏/提示条统一走 `--glass-*` 令牌，
+      一律 `backdrop-filter: blur() saturate()` + 内高光模拟受光边。
+   3. 层次：阴影从 3 档扩到 4 档，配合玻璃边框拉开发散感；新增 `--glow` 强调辉光。
+
+   令牌命名保持向后兼容（--card/--line/--brand 等语义不变），
+   所以三个视图的 CSS 只需少量覆写即可整体跟随新主题。
+
+   ⚠️ 主题默认暗色：各页 <head> 里的首屏同步脚本在**无历史记录**时
+      应先读 prefers-color-scheme，再落到 light。之前默认亮色的逻辑要一并改。
    ========================================================================== */
-:root{
-  /* 表面与文字 */
-  --bg:#f3f7f5; --bg-soft:#eef4f1; --card:#ffffff;
-  --ink:#152b23; --ink-2:#33463e; --sub:#5f7369; --mute:#93a69d;
-  --line:#e3ebe6; --line-2:#cfdcd6;
-  /* 品牌与语义色 */
-  --brand:#0f9d76; --brand-d:#0b7d5e; --brand-soft:#e7f6f0;
-  --blue:#3b82f6; --blue-soft:#eaf2fe;
-  --orange:#e08a3c; --orange-soft:#fdf3e8;
-  --violet:#8b5cf6; --red:#dc5b5b;
-  /* 四类 typed 边 */
-  --e-depends:#3b82f6; --e-derives:#0f9d76; --e-refs:#e08a3c; --e-similar:#9aa9a3;
-  /* 层次 */
-  --shadow-1:0 1px 2px rgba(16,42,33,.05);
-  --shadow-2:0 2px 6px rgba(16,42,33,.06), 0 10px 28px rgba(16,42,33,.07);
-  --r-sm:8px; --r:10px; --r-lg:14px;
-  --hdr:56px;
+
+/* ---------- 暗色（默认） ---------- */
+:root,
+[data-theme="dark"]{
+  color-scheme: dark;
+
+  /* 表面：深空蓝黑而非纯黑 —— 纯黑会让玻璃失去层次 */
+  --bg:#080b14;
+  --bg-soft:#0d1220;
+  --bg-deep:#05070d;
+  --card:rgba(20,26,42,.72);
+  --card-solid:#141a2a;
+  --panel:rgba(255,255,255,.035);
+
+  /* 玻璃系统 */
+  --glass:rgba(255,255,255,.045);
+  --glass-2:rgba(255,255,255,.07);
+  --glass-hi:rgba(255,255,255,.12);       /* 内高光，模拟受光边 */
+  --glass-line:rgba(255,255,255,.085);
+  --glass-blur:22px;
+
+  /* 文字 */
+  --ink:#e9edf9;
+  --ink-2:#b9c3dd;
+  --sub:#8590ae;
+  /* D-061：#5b6482 在卡片底（实测 #13151e）只有 2.96:1，
+     时间戳/节点名/空状态全都发灰看不清 → 提到 #78859f（4.83:1）。 */
+  --mute:#78859f;
+
+  /* 描边 */
+  --line:rgba(255,255,255,.075);
+  --line-2:rgba(255,255,255,.14);
+
+  /* 主色：靛蓝；强调：电光青（选中 / 源节点 / 数据流）
+     D-061：--brand 由 #6b74f0 提到 #7b83f5 —— 原值在卡片底仅 4.44:1，
+     差一点点不达AA；--brand-d 同步提亮保持层级。 */
+  --brand:#7b83f5;
+  --brand-d:#9aa0ff;
+  --brand-soft:rgba(107,116,240,.16);
+  --accent:#22d3ee;
+  --accent-soft:rgba(34,211,238,.14);
+
+  /* 语义色 */
+  --blue:#60a5fa;
+  --blue-soft:rgba(96,165,250,.15);
+  --orange:#f5a524;
+  --orange-soft:rgba(245,165,36,.15);
+  --violet:#a78bfa;
+  --violet-soft:rgba(167,139,250,.15);
+  --rose:#fb7185;
+  --red:#fb7185;
+
+  /* 四类 typed 边：靛蓝 → 青 → 紫 → 石板灰
+     D-061：similar_to 原与 --mute 同值（2.96:1，边线几乎看不见）→ 同步提亮 */
+  --e-depends:#7b83f5;
+  --e-derives:#22d3ee;
+  --e-refs:#a78bfa;
+  --e-similar:#78859f;
+
+  /* 层次：玻璃面上的投影要比不透明面更轻，否则显脏 */
+  --shadow-1:0 1px 2px rgba(0,0,0,.40);
+  --shadow-2:0 4px 16px rgba(0,0,0,.42), 0 1px 3px rgba(0,0,0,.30);
+  --shadow-3:0 10px 34px rgba(0,0,0,.50), 0 2px 8px rgba(0,0,0,.34);
+  --shadow-4:0 20px 60px rgba(0,0,0,.60), 0 4px 14px rgba(0,0,0,.40);
+  --glow:0 0 0 1px rgba(34,211,238,.55), 0 0 22px rgba(34,211,238,.28);
+
+  /* D-061：图节点投影色（graph.js 的 shadow-color 读它，不用再硬编码） */
+  --shadow-tint:rgba(0,0,0,.55);
+  /* D-061：图节点描边（不能用 --line-2，暗色下会变刺眼白框） */
+  --pool-stroke:rgba(255,255,255,.55);
+  --accent-hi:#7ff3e4; --inherit-line:#378add; --inherit-dot:#e6f1fb;
+  --node-stroke:#3a4260;
+  /* D-061：记忆池按节点着色的扩展槽位（dashboard.js NODE_COL 读这些令牌） */
+  --green-ne:#34d399; --pink-ne:#f472b6; --amber-ne:#fbbf24;
+  --cyan-ne:#22d3ee; --purple-ne:#c084fc; --coral-ne:#fb923c;
+
+  --r-sm:9px; --r:12px; --r-lg:18px; --r-xl:26px;
+  --hdr:60px;
 }
+
+/* ---------- 暗色 · 高对比（D-061）----------
+   投影偏暗 / 极暗环境下用：把弱对比层级推到 AAA，并把描边加重。
+   ⚠️ 与 [data-theme="light"][data-contrast="high"] 是**两条独立规则**，
+      靠选择器优先级区分（各自带自己的 data-theme 限定），不要合并。 */
+[data-theme="dark"][data-contrast="high"]{
+  --bg:#02040a;
+  --bg-soft:#0a0e1a;
+  --bg-deep:#000206;
+
+  --card:rgba(16,21,36,.94);
+  --card-solid:#0d1220;
+  --panel:rgba(255,255,255,.07);
+
+  --glass:rgba(255,255,255,.075);
+  --glass-2:rgba(255,255,255,.11);
+  --glass-hi:rgba(255,255,255,.20);
+  --glass-line:rgba(255,255,255,.22);
+
+  --ink:#ffffff;        /* 21:1 */
+  --ink-2:#e2e8f7;      /* 16.5:1 */
+  --sub:#b3bed6;        /* 10.4:1 */
+  --mute:#9aa7c5;       /*  7.4:1 ← 原 #93a0be 差 0.16 未达 AAA */
+
+  --line:rgba(255,255,255,.18);
+  --line-2:rgba(255,255,255,.32);
+
+  --brand:#a5abff;      /* 提亮，暗底下靛蓝偏暗 */
+  --brand-d:#c3c7ff;
+  --accent:#5ee2f7;
+  --blue:#93c5fd;
+  --orange:#fbbf24;
+  --violet:#c4b5fd;
+  --rose:#fda4af;
+  --red:#fda4af;
+
+  --e-depends:#a5abff;
+  --e-derives:#5ee2f7;
+  --e-refs:#c4b5fd;
+  --e-similar:#94a3b8;  /* 原 #5b6482 在暗底仅 2.9，边线不可见 */
+
+  --shadow-1:0 1px 2px rgba(0,0,0,.70);
+  --shadow-2:0 4px 16px rgba(0,0,0,.74), 0 1px 3px rgba(0,0,0,.60);
+  --shadow-3:0 10px 34px rgba(0,0,0,.80), 0 2px 8px rgba(0,0,0,.64);
+  --shadow-4:0 20px 60px rgba(0,0,0,.88), 0 4px 14px rgba(0,0,0,.70);
+  --glow:0 0 0 2px rgba(94,226,247,.75), 0 0 24px rgba(94,226,247,.40);
+  --shadow-tint:rgba(0,0,0,.75);
+  --pool-stroke:rgba(255,255,255,.72);
+  --accent-hi:#a5f3fc; --inherit-line:#60a5fa; --inherit-dot:#dbeafe;
+  --node-stroke:#5a6480;
+  --green-ne:#6ee7b7; --pink-ne:#f9a8d4; --amber-ne:#fcd34d;
+  --cyan-ne:#67e8f9; --purple-ne:#d8b4fe; --coral-ne:#fdba74;
+}
+
+/* ---------- 亮色（备用主题，D-061 强光可读性优化）----------
+   改动动机：原方案在强光/投影下多处不达标（WCAG 实测）：
+     --mute      3.00→时间戳/节点名/空状态，强光下几乎看不见
+     --accent    3.59→小字不可读
+     --e-similar 2.50→similar_to 边线消失
+   本次调整（全部按WCAG AA >=4.5 重新定值，已用对比度公式核验）：
+     --bg 压深一档#eef1f8→#e8ecf6，减少屏幕反光
+     玻璃层透明度上调（.62→.76/.86），避免背后内容干扰前景文字
+     边框加深（.085→.13），强光下浅边框会消失
+   高对比模式见下方 [data-contrast="high"]。*/
+
+[data-theme="light"]{
+  color-scheme: light;
+
+  --bg:#e8ecf6;
+  --bg-soft:#f4f7fd;
+  --bg-deep:#dee3f1;
+  --card:rgba(255,255,255,.86);
+  --card-solid:#ffffff;
+  --panel:rgba(255,255,255,.66);
+
+  --glass:rgba(255,255,255,.76);
+  --glass-2:rgba(255,255,255,.88);
+  --glass-hi:rgba(255,255,255,.98);
+  --glass-line:rgba(19,26,48,.13);
+  --glass-blur:18px;
+
+  /* 文字：全部 >=4.5:1（实测值见注释） */
+  --ink:#0e1424;        /* 17.4:1 */
+  --ink-2:#333d57;      /* 10.4:1 */
+  --sub:#4e5872;        /*  6.9:1 */
+  --mute:#5f6880;       /*  5.4:1 ← 原#8a93ab 仅 3.0，不可读 */
+
+  --line:rgba(19,26,48,.13);
+  --line-2:rgba(19,26,48,.24);
+
+  --brand:#4f52d8;
+  --brand-d:#3d40c4;
+  --brand-soft:rgba(79,82,216,.13);
+  --accent:#0e7490;     /*  5.2:1 ← 原 #0891b2 仅 3.6，小字不可读 */
+  --accent-soft:rgba(14,116,144,.13);
+
+  --blue:#2563eb;
+  --blue-soft:rgba(37,99,235,.13);
+  --orange:#b45309;     /* 加深：#d97706 在白底仅 3.3 */
+  --orange-soft:rgba(180,83,9,.14);
+  --violet:#6d28d9;
+  --violet-soft:rgba(124,58,237,.13);
+  --rose:#be123c;
+  --red:#be123c;
+
+  --e-depends:#4f52d8;
+  --e-derives:#0e7490;
+  --e-refs:#6d28d9;
+  --e-similar:#64748b;  /*  4.6:1 ← 原 #94a3b8 仅 2.5，边线不可见 */
+
+  /* 强光下投影要更明确才能拉开层次（原值偏淡） */
+  --shadow-1:0 1px 2px rgba(19,26,48,.10);
+  --shadow-2:0 2px 8px rgba(19,26,48,.11), 0 1px 2px rgba(19,26,48,.07);
+  --shadow-3:0 8px 26px rgba(19,26,48,.15), 0 2px 6px rgba(19,26,48,.09);
+  --shadow-4:0 18px 48px rgba(19,26,48,.20), 0 4px 12px rgba(19,26,48,.11);
+  --glow:0 0 0 2px rgba(14,116,144,.55), 0 0 18px rgba(14,116,144,.24);
+  --shadow-tint:rgba(19,26,48,.20);
+  --pool-stroke:rgba(19,26,48,.42);
+  --accent-hi:#0891b2; --inherit-line:#2563eb; --inherit-dot:#dbeafe;
+  --node-stroke:#c2cadb;
+  --green-ne:#047857; --pink-ne:#be185d; --amber-ne:#a16207;
+  --cyan-ne:#0e7490; --purple-ne:#6d28d9; --coral-ne:#c2410c;
+}
+
+/* ---------- 高对比模式（D-061）----------
+   一键把弱对比令牌推到 AAA（>=7:1），用于强光/投影环境。
+   只改令牌值，不动任何组件规则 —— 组件自动跟随。
+   ⚠️ 必须放在 [data-theme="light"] **之后**：同优先级靠后者胜出，
+   放到前面会被覆盖（与 D-058b 的 :root 覆盖事故同类）。 */
+[data-theme="light"][data-contrast="high"]{
+  --bg:#e4e9f4;
+  --bg-soft:#eef2fa;
+  --bg-deep:#dbe1ef;
+
+  --card:rgba(255,255,255,.96);
+  --panel:rgba(255,255,255,.90);
+  --glass:rgba(255,255,255,.92);
+  --glass-2:rgba(255,255,255,.97);
+  --glass-hi:#ffffff;
+  --glass-line:rgba(19,26,48,.26);
+
+  --ink:#05070f;        /* 19.9:1 */
+  --ink-2:#1b2337;      /* 15.5:1 */
+  --sub:#3d4761;        /*  9.2:1 */
+  --mute:#3c4456;       /*  8.3:1 ← 最差底色（画布页 #e8ecf6）实测，留了余量 */
+
+  --line:rgba(19,26,48,.28);
+  --line-2:rgba(19,26,48,.44);
+
+  --brand:#3730a3;
+  --brand-d:#312e81;
+  --accent:#074a5b;     /*  8.3:1 ← 原 #0b5c73 在画布页底仅 6.36 */
+  --blue:#1d4ed8;
+  --orange:#92400e;
+  --violet:#5b21b6;
+  --rose:#9f1239;
+  --red:#9f1239;
+
+  --e-depends:#3730a3;
+  --e-derives:#0b5c73;
+  --e-refs:#5b21b6;
+  --e-similar:#475569;  /*  7.5:1 */
+
+  /* 高对比下阴影更硬，替代被压平的玻璃通透感 */
+  --shadow-1:0 1px 2px rgba(19,26,48,.16);
+  --shadow-2:0 2px 8px rgba(19,26,48,.18), 0 1px 2px rgba(19,26,48,.12);
+  --shadow-3:0 8px 24px rgba(19,26,48,.22), 0 2px 6px rgba(19,26,48,.14);
+  --shadow-4:0 16px 44px rgba(19,26,48,.28), 0 4px 12px rgba(19,26,48,.16);
+  --glow:0 0 0 3px rgba(7,74,91,.62), 0 0 20px rgba(7,74,91,.32);
+  --shadow-tint:rgba(19,26,48,.34);
+  --pool-stroke:rgba(19,26,48,.58);
+  --accent-hi:#155e75; --inherit-line:#1d4ed8; --inherit-dot:#bfdbfe;
+  --node-stroke:#aeb8cc;
+  --green-ne:#065f46; --pink-ne:#9d174d; --amber-ne:#7c2d12;
+  --cyan-ne:#155e75; --purple-ne:#5b21b6; --coral-ne:#9a3412;
+}
+
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--ink);
+body{
+  margin:0;color:var(--ink);
+  background:
+    radial-gradient(1200px 620px at 12% -8%, rgba(107,116,240,.16), transparent 62%),
+    radial-gradient(1000px 560px at 92% 4%, rgba(34,211,238,.11), transparent 58%),
+    var(--bg);
   font:14px/1.6 "PingFang SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  -webkit-font-smoothing:antialiased}
-a{color:var(--brand);text-decoration:none}
-a:hover{color:var(--brand-d)}
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--brand-d);text-decoration:none}
+a:hover{color:var(--accent)}
+
+/* ---------- 玻璃基类：需要"悬浮面板感"的容器都套这个 ---------- */
+.glass{
+  background:var(--glass);
+  border:1px solid var(--glass-line);
+  backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  box-shadow:var(--shadow-2), inset 0 1px 0 var(--glass-hi);
+}
 
 /* ---------- 顶栏 ---------- */
-.topbar{display:flex;align-items:center;gap:10px;height:var(--hdr);padding:0 18px;
-  background:var(--card);border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;
-  box-shadow:var(--shadow-1);position:relative;z-index:10}
-.topbar h1{font-size:15px;font-weight:650;margin:0;letter-spacing:.2px}
-.topbar .navlink{flex:none;font-size:13px;padding:5px 10px;border-radius:var(--r-sm);
-  color:var(--sub);transition:.15s}
-.topbar .navlink:hover{background:var(--bg-soft);color:var(--brand)}
-.topbar .navlink.on{background:var(--brand-soft);color:var(--brand-d);font-weight:600}
+.topbar{
+  display:flex;align-items:center;gap:10px;height:var(--hdr);padding:0 18px;
+  background:var(--glass);border-bottom:1px solid var(--glass-line);
+  backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  box-shadow:var(--shadow-1);position:relative;z-index:10;white-space:nowrap;overflow:hidden;
+}
+.topbar h1{font-size:15px;font-weight:600;margin:0;letter-spacing:.2px}
+.topbar .navlink{
+  flex:none;font-size:13px;padding:5px 11px;border-radius:var(--r-sm);
+  color:var(--sub);transition:.18s;border:1px solid transparent;
+}
+.topbar .navlink:hover{background:var(--glass-2);color:var(--ink-2);border-color:var(--glass-line)}
+.topbar .navlink.on{
+  background:var(--brand-soft);color:var(--brand-d);font-weight:600;
+  border-color:rgba(107,116,240,.32);
+}
 .topbar .spacer{flex:1}
 .topbar .hint{font-size:12px;color:var(--mute)}
 
 /* ---------- 工具条 ---------- */
 .toolbar{display:flex;align-items:center;gap:8px;flex:none}
-.field{display:flex;align-items:center;gap:6px;background:var(--bg-soft);
-  border:1px solid var(--line-2);border-radius:var(--r-sm);padding:0 10px;height:32px;transition:.15s}
-.field:focus-within{border-color:var(--brand);background:#fff;box-shadow:0 0 0 3px rgba(15,157,118,.10)}
-.field input{border:none;background:none;outline:none;font:13px/1 inherit;color:var(--ink);
-  width:250px;font-family:inherit}
+.field{
+  display:flex;align-items:center;gap:6px;background:var(--glass-2);
+  border:1px solid var(--glass-line);border-radius:var(--r-sm);
+  padding:0 11px;height:33px;transition:.18s;
+}
+.field:focus-within{border-color:var(--brand);background:var(--glass-hi);
+  box-shadow:0 0 0 3px rgba(107,116,240,.18)}
+.field input{border:none;background:none;outline:none;font:13px/1 inherit;
+  color:var(--ink);width:250px;font-family:inherit}
 .field input::placeholder{color:var(--mute)}
-.btn{height:32px;padding:0 13px;border:1px solid transparent;border-radius:var(--r-sm);
-  font:13px/1 inherit;font-family:inherit;cursor:pointer;transition:.15s;white-space:nowrap}
-.btn-primary{background:var(--brand);color:#fff;box-shadow:var(--shadow-1)}
-.btn-primary:hover{background:var(--brand-d)}
-.btn-primary:disabled{background:#b7cdc4;cursor:default;box-shadow:none}
-.btn-ghost{background:var(--card);border-color:var(--line-2);color:var(--ink-2)}
+.btn{height:33px;padding:0 14px;border:1px solid transparent;border-radius:var(--r-sm);
+  font:13px/1 inherit;font-family:inherit;cursor:pointer;transition:.18s;white-space:nowrap}
+.btn-primary{background:linear-gradient(135deg,var(--brand),var(--brand-d));color:#fff;
+  box-shadow:var(--shadow-2), inset 0 1px 0 rgba(255,255,255,.22)}
+.btn-primary:hover{filter:brightness(1.09)}
+.btn-primary:disabled{filter:grayscale(.55) brightness(.72);cursor:default;box-shadow:none}
+.btn-ghost{background:var(--glass-2);border-color:var(--glass-line);color:var(--ink-2)}
 .btn-ghost:hover{border-color:var(--brand);color:var(--brand-d)}
-.seg{display:flex;border:1px solid var(--line-2);border-radius:var(--r-sm);overflow:hidden;height:32px}
-.seg button{border:none;background:var(--card);padding:0 11px;font:12.5px/1 inherit;
-  font-family:inherit;color:var(--sub);cursor:pointer}
-.seg button+button{border-left:1px solid var(--line-2)}
-.seg button.on{background:var(--brand-soft);color:var(--brand-d);font-weight:600}
+.seg{display:flex;border:1px solid var(--glass-line);border-radius:var(--r-sm);
+  overflow:hidden;height:33px;background:var(--glass-2)}
+.seg button{border:none;background:none;padding:0 12px;font:12.5px/1 inherit;
+  font-family:inherit;color:var(--sub);cursor:pointer;transition:.16s}
+.seg button+button{border-left:1px solid var(--glass-line)}
+.seg button:hover{color:var(--ink-2)}
+.seg button.on{background:var(--brand-soft);color:var(--brand-d);font-weight:600;
+  box-shadow:inset 0 0 0 1px rgba(107,116,240,.3)}
 
 /* ---------- 主区 ---------- */
 .split{display:flex;height:calc(100vh - var(--hdr))}
 .canvas-wrap{position:relative;flex:1;min-width:0;background:
-  radial-gradient(circle at 18% 12%, #fbfdfc 0%, var(--bg) 55%)}
+  radial-gradient(900px 520px at 20% 10%, rgba(107,116,240,.09), transparent 60%),
+  radial-gradient(760px 480px at 86% 88%, rgba(34,211,238,.07), transparent 58%)}
 #cy{position:absolute;inset:0}
-.float-tip{position:absolute;left:14px;bottom:12px;z-index:5;max-width:min(560px,62%);
-  background:rgba(255,255,255,.94);backdrop-filter:blur(6px);border:1px solid var(--line);
-  border-radius:var(--r);padding:7px 13px;font-size:11.5px;color:var(--sub);line-height:1.65;
-  box-shadow:var(--shadow-2);pointer-events:none}
-/* 注意：命名为 map-legend 而非 legend —— 控制台/画布两页也有自己的 .legend
-   （页面内图例），通用类名会互相污染（实测导致控制台图例被绝对定位盖到画布上）。 */
-.map-legend{position:absolute;right:14px;top:12px;z-index:5;background:rgba(255,255,255,.94);
-  backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:var(--r);
-  padding:9px 12px;font-size:11.5px;color:var(--sub);box-shadow:var(--shadow-2);line-height:1.9}
-.legend .sw{display:inline-block;width:16px;height:3px;border-radius:2px;margin-right:6px;
-  vertical-align:3px}
+
+.float-tip{
+  position:absolute;left:14px;bottom:12px;z-index:5;max-width:min(560px,62%);
+  background:var(--glass);backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  border:1px solid var(--glass-line);border-radius:var(--r);
+  padding:8px 14px;font-size:11.5px;color:var(--sub);line-height:1.65;
+  box-shadow:var(--shadow-2), inset 0 1px 0 var(--glass-hi);pointer-events:none;
+}
+/* 命名保持 map-legend：控制台/画布两页各有自己的 .legend，通用名会互相污染。 */
+.map-legend{
+  position:absolute;right:14px;bottom:12px;z-index:5;
+  background:var(--glass);backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  border:1px solid var(--glass-line);border-radius:var(--r);
+  padding:10px 13px;font-size:11.5px;color:var(--sub);
+  box-shadow:var(--shadow-3), inset 0 1px 0 var(--glass-hi);line-height:1.85;
+}
+.map-legend .row{display:flex;align-items:center;gap:8px;white-space:nowrap;
+  cursor:pointer;padding:2px 5px;margin:0 -5px;border-radius:7px;transition:background .16s}
+.map-legend .row:hover{background:var(--glass-2)}
+.map-legend .row.off{opacity:.34}
+.map-legend .row .cnt{margin-left:auto;padding-left:12px;
+  font-variant-numeric:tabular-nums;color:var(--mute);font-size:11px}
+.map-legend .note{margin-top:6px;padding-top:6px;border-top:1px solid var(--glass-line);
+  color:var(--mute);font-size:11px;max-width:200px;white-space:normal;line-height:1.5}
+.legend .sw{display:inline-block;width:18px;height:3px;border-radius:2px;margin-right:7px;vertical-align:3px}
 
 /* ---------- 侧栏 ---------- */
-.side{width:332px;flex:none;background:var(--card);border-left:1px solid var(--line);
-  overflow-y:auto;padding:18px}
-.side::-webkit-scrollbar{width:8px}
-.side::-webkit-scrollbar-thumb{background:#cfdcd6;border-radius:4px}
-.side h2{font-size:12px;font-weight:650;color:var(--mute);letter-spacing:.8px;
-  text-transform:uppercase;margin:0 0 10px}
-.side h3{font-size:12.5px;font-weight:650;color:var(--sub);margin:18px 0 8px;
-  display:flex;align-items:center;gap:6px}
+.side{
+  width:344px;flex:none;background:var(--glass);
+  border-left:1px solid var(--glass-line);
+  backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(180%);
+  overflow-y:auto;padding:18px;
+}
+.side::-webkit-scrollbar{width:9px}
+.side::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:5px}
+.side::-webkit-scrollbar-track{background:transparent}
+.side h2{font-size:11px;font-weight:600;color:var(--mute);letter-spacing:1px;
+  text-transform:uppercase;margin:0 0 12px}
+.side h3{font-size:12.5px;font-weight:600;color:var(--sub);margin:20px 0 9px;
+  display:flex;align-items:center;gap:7px}
 .side h3::after{content:"";flex:1;height:1px;background:var(--line)}
-.side .title{font-size:17px;font-weight:650;line-height:1.4;margin:0 0 6px}
+.side .title{font-size:17px;font-weight:600;line-height:1.4;margin:0 0 6px}
 .side .meta{font-size:12px;color:var(--sub);margin-bottom:12px;line-height:1.75}
-.side .box{background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);
-  padding:10px 12px;font-size:12.5px;color:var(--ink-2);line-height:1.7;
+.side .box{background:var(--glass-2);border:1px solid var(--glass-line);border-radius:var(--r);
+  padding:11px 13px;font-size:12.5px;color:var(--ink-2);line-height:1.7;
   max-height:150px;overflow:auto}
 .side .empty{font-size:12.5px;color:var(--mute);padding:6px 0}
 .back-dash{display:inline-block;margin-top:16px;font-size:12.5px}
 
 /* KPI 与条形图 */
-.kpi{display:flex;justify-content:space-between;align-items:center;padding:7px 0;
+.kpi{display:flex;justify-content:space-between;align-items:center;padding:8px 0;
   border-bottom:1px dashed var(--line);font-size:12.5px}
 .kpi:last-child{border-bottom:none}
-.kpi b{font-size:14px;font-weight:650;color:var(--brand-d);font-variant-numeric:tabular-nums}
-.trow{display:flex;align-items:center;gap:7px;font-size:12px;margin-bottom:6px}
+.kpi b{font-size:15px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
+.trow{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:7px}
 .trow .dot{width:9px;height:9px;border-radius:3px;flex:none}
-.trow .nm{min-width:86px;color:var(--sub)}
+.trow .nm{min-width:88px;color:var(--sub)}
 .trow .num{min-width:22px;text-align:right;color:var(--ink-2);
   font-variant-numeric:tabular-nums;font-weight:600}
-.bar{height:6px;border-radius:3px;background:var(--bg-soft);overflow:hidden}
-.bar i{display:block;height:100%;border-radius:3px;transition:width .3s}
+.bar{height:6px;border-radius:3px;background:var(--panel);overflow:hidden;flex:1}
+.bar i{display:block;height:100%;border-radius:3px;transition:width .34s cubic-bezier(.16,1,.3,1)}
 .elist{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:3px}
-.etype{font-size:10px;padding:1.5px 7px;border-radius:5px;color:#fff;flex:none;font-weight:600}
-.elist .nm{min-width:96px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap}
+.etype{font-size:10px;padding:2px 7px;border-radius:6px;flex:none;font-weight:600;
+  background:var(--glass-2);color:var(--ink-2);border:1px solid var(--glass-line)}
+.elist .nm{min-width:96px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .elist .val{font-variant-numeric:tabular-nums;color:var(--sub);min-width:38px;text-align:right}
-.subline{font-size:11px;color:var(--mute);margin:-1px 0 8px 104px;
-  font-variant-numeric:tabular-nums}
+.subline{font-size:11px;color:var(--mute);margin:-1px 0 8px 104px;font-variant-numeric:tabular-nums}
 
-/* 卡片（源明细） */
-.card{border:1px solid var(--line);border-radius:var(--r);padding:11px 13px;
-  margin-bottom:10px;background:var(--card);box-shadow:var(--shadow-1)}
-.card.hot{border-color:#e8c49a;background:#fffdfa}
-.card .hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+/* 卡片（源明细）—— 毛玻璃 */
+.card{
+  border:1px solid var(--glass-line);border-radius:var(--r);padding:12px 14px;
+  margin-bottom:10px;background:var(--glass-2);
+  backdrop-filter:blur(12px) saturate(160%);
+  -webkit-backdrop-filter:blur(12px) saturate(160%);
+  box-shadow:var(--shadow-1), inset 0 1px 0 var(--glass-hi);
+  transition:border-color .18s, box-shadow .18s;
+}
+.card:hover{border-color:var(--line-2);box-shadow:var(--shadow-2), inset 0 1px 0 var(--glass-hi)}
+.card.hot{
+  border-color:rgba(34,211,238,.34);
+  background:linear-gradient(180deg, rgba(34,211,238,.10), var(--glass-2));
+  box-shadow:var(--glow), var(--shadow-2);
+}
+.card .hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .card .hd b{font-size:13px}
-.card .pill{font-size:10.5px;padding:2px 8px;border-radius:20px;
-  background:var(--orange-soft);color:#8a4b12;font-weight:600}
-.card .pill.g{background:var(--brand-soft);color:var(--brand-d)}
+.card .pill{font-size:10.5px;padding:2px 9px;border-radius:20px;font-weight:600;
+  background:var(--accent-soft);color:var(--accent);border:1px solid rgba(34,211,238,.26)}
+.card .pill.g{background:var(--panel);color:var(--sub);border-color:var(--glass-line)}
 
 /* 悬浮提示 */
-#tip{position:fixed;z-index:99;pointer-events:none;opacity:0;transition:opacity .13s;
-  background:#152b23;color:#fff;font-size:11.5px;line-height:1.6;border-radius:var(--r-sm);
-  padding:7px 11px;max-width:320px;box-shadow:var(--shadow-2)}
+#tip{
+  position:fixed;z-index:99;pointer-events:none;opacity:0;transition:opacity .14s;
+  background:var(--card-solid);border:1px solid var(--glass-line);color:var(--ink);
+  font-size:11.5px;line-height:1.6;border-radius:var(--r-sm);
+  padding:8px 12px;max-width:320px;box-shadow:var(--shadow-3), inset 0 1px 0 var(--glass-hi);
+}
 #tip.show{opacity:1}
-#tip b{color:#8fe3c8}
+#tip b{color:var(--accent)}
+
+/* ---------- 主题切换 ---------- */
+.theme-btn{
+  flex:none;width:33px;height:33px;padding:0;display:inline-flex;
+  align-items:center;justify-content:center;background:var(--glass-2);
+  border:1px solid var(--glass-line);border-radius:var(--r-sm);cursor:pointer;
+  color:var(--ink-2);transition:.18s;
+}
+.theme-btn:hover{border-color:var(--brand);color:var(--brand-d);box-shadow:0 0 0 3px rgba(107,116,240,.14)}
+.theme-btn svg{width:15px;height:15px;display:block}
+/* D-061：高对比按钮激活态 —— 必须有明确视觉反馈，
+   否则用户点了不知道开没开（强光下尤其重要）。 */
+.theme-btn.on{
+  border-color:var(--accent);color:var(--accent);
+  background:var(--accent-soft);box-shadow:0 0 0 2px var(--accent-soft);
+}
+
+/* ---------- 动效基础设施 ----------
+   统一走 Web Animations API：0 依赖、0 体积、演示环境可离线。
+   尊重 prefers-reduced-motion —— 前庭敏感用户必须能关掉动效。 */
+@keyframes srtp-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes srtp-slide-left{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+@keyframes srtp-blink{0%,50%{opacity:1}51%,100%{opacity:0}}
+@keyframes srtp-shimmer{0%{background-position:-420px 0}100%{background-position:420px 0}}
+@keyframes srtp-pulse-ring{
+  0%{box-shadow:0 0 0 0 rgba(34,211,238,.42)}
+  70%{box-shadow:0 0 0 10px rgba(34,211,238,0)}
+  100%{box-shadow:0 0 0 0 rgba(34,211,238,0)}}
+
+.rise{opacity:0;animation:srtp-rise .34s cubic-bezier(.16,1,.3,1) forwards;
+  animation-delay:calc(var(--i,0) * 60ms)}
+.slide-in{opacity:0;animation:srtp-slide-left .28s cubic-bezier(.16,1,.3,1) forwards;
+  animation-delay:calc(var(--i,0) * 60ms)}
+.cursor-blink{display:inline-block;width:2px;height:1em;vertical-align:-2px;
+  margin-left:2px;background:var(--accent);animation:srtp-blink 1s steps(1) infinite}
+.skeleton{border-radius:var(--r-sm);
+  background:linear-gradient(90deg,var(--panel) 25%,var(--glass-2) 37%,var(--panel) 63%);
+  background-size:840px 100%;animation:srtp-shimmer 1.4s linear infinite}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important}
+  .rise,.slide-in{opacity:1;animation:none}}
+
+/* ============================================================================
+   D-061 ·亮色强光增强（组件层）
+   放在文件**末尾**：与上面的亮色令牌块同属一套，靠后加载覆盖前面的组件规则。
+   只在亮色生效，暗色完全不受影响。
+
+   要解决的问题（都是实测/肉眼可确认的）：
+   ① 组件里有一批**硬编码暗色青色** rgba(34,211,238,.xx)，
+      亮色下会显示成偏浅的荧光青，与新的 #0e7490 不匹配 → 统一走令牌。
+   ② 强光下 1px 边框 +浅阴影拉不开层次 → 卡片描边加到 1.5px、投影加重。
+   ③ 输入框/按钮聚焦环在亮色下过淡 → 改用 --glow 令牌（已是2px 实心）。
+   ④ 文字元素在强光下发虚 → 弱对比层级（--mute/--sub）字重略提。
+   ========================================================================== */
+
+/* 亮色下的组件修正 */
+[data-theme="light"] .card.hot{
+  border-color:rgba(14,116,144,.42);
+  background:linear-gradient(180deg, rgba(14,116,144,.10), var(--glass-2));
+}
+[data-theme="light"] .card .pill{
+  background:var(--accent-soft);color:var(--accent);
+  border-color:rgba(14,116,144,.32);
+}
+[data-theme="light"] .topbar .navlink.on{
+  background:var(--brand-soft);color:var(--brand-d);
+  border-color:rgba(79,82,216,.40);
+}
+[data-theme="light"] .seg button.on{
+  background:var(--brand-soft);color:var(--brand-d);
+  box-shadow:inset 0 0 0 1px rgba(79,82,216,.40);
+}
+/* 强光下描边加粗，把卡片从背景里"抠"出来 */
+[data-theme="light"] .glass,
+[data-theme="light"] .card,
+[data-theme="light"] .side .box,
+[data-theme="light"] .field,
+[data-theme="light"] .btn-ghost{
+  border-width:1.5px;
+}
+/* 投影加重：亮色下浅阴影几乎不可见 */
+[data-theme="light"] .card{
+  box-shadow:var(--shadow-2), inset 0 1px 0 var(--glass-hi);
+}
+[data-theme="light"] .card:hover{
+  box-shadow:var(--shadow-3), inset 0 1px 0 var(--glass-hi);
+}
+/* 聚焦环改用 --glow 令牌（亮色下是 2px 实心环，暗色是 1px 辉光） */
+[data-theme="light"] .field:focus-within{
+  border-color:var(--brand);background:var(--glass-hi);
+  box-shadow:0 0 0 2px rgba(79,82,216,.30);
+}
+[data-theme="light"] .theme-btn:hover{
+  box-shadow:0 0 0 2px rgba(55,48,163,.34);
+}
+/* 弱对比层级字重上提，强光下发虚的文字靠字重补回来
+   （--sub / --mute 现在都 >=4.5:1，字重补的是"看起来发虚"而非"读不到"） */
+[data-theme="light"] .topbar .hint,
+[data-theme="light"] .subline,
+[data-theme="light"] .side h2,
+[data-theme="light"] .map-legend .row .cnt,
+[data-theme="light"] .map-legend .note,
+[data-theme="light"] .side .empty,
+[data-theme="light"] .field input::placeholder{
+  font-weight:500;
+}
+[data-theme="light"] .elist .val,
+[data-theme="light"] .trow .nm{color:var(--sub);font-weight:500}
+/* 代码/JSON 块：亮色下加浅底 + 等宽加粗，否则读起来发飘 */
+[data-theme="light"] .bubble.md code,
+[data-theme="light"] .side .box code,
+[data-theme="light"] pre{
+  background:var(--panel);
+  border:1px solid var(--glass-line);
+  border-radius:6px;
+  font-weight:600;
+}
+[data-theme="light"] .bubble.md code{color:var(--brand-d)}
+
+/* ---- 高对比模式：组件层再加一层保险 ----
+   令牌已推到 AAA，这里只补"形状层面的可辨识"：边框/字重/下划线。
+   （D-061：暗色下也支持高对比，投影仪偏暗环境用） */
+[data-contrast="high"] .glass,
+[data-contrast="high"] .card,
+[data-contrast="high"] .side .box,
+[data-contrast="high"] .field,
+[data-contrast="high"] .btn-ghost{
+  border-width:2px;
+}
+[data-contrast="high"] .topbar .hint,
+[data-contrast="high"] .subline,
+[data-contrast="high"] .side h2,
+[data-contrast="high"] .map-legend .note,
+[data-contrast="high"] .side .empty{
+  font-weight:600;
+}
+/* 高对比下链接/导航加下划线，不只靠颜色区分 */
+[data-contrast="high"] .topbar .navlink.on,
+[data-contrast="high"] a{
+  text-decoration:underline;
+  text-underline-offset:3px;
+}

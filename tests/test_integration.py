@@ -3,7 +3,7 @@
 覆盖 5 个全流程场景（对应工程实现文档验收标准）：
   1. test_cross_instance_recall_persistence — 跨会话召回（O-1/O-7）：固定 session 下实例重启后记忆仍可召回
   2. test_chinese_roundtrip_utf8            — 中文完整性（O-3）：写入→落盘→重载→召回逐字无损
-  3. test_main_sub_agent_dispatch           — 主副智能体调度（FR-6）：schedule_once 精选 → dispatch 交副线
+  3. test_main_sub_agent_dispatch           — 主副智能体调度（FR-6）：schedule_once 精选 → dispatch 交下游节点
   4. test_failure_degradation_no_api        — 失败降级（D-11）：无 key 时 embedding→占位、LLM 先验→默认权重，管线不中断
   5. test_user_isolation_concurrent         — 并发隔离（NFR-7）：多 user 交错调度，记忆互不串扰
   6. test_vector_retriever_semantic_ranking — 向量检索链路（离线）：确定性占位向量下同主题排序正确
@@ -101,7 +101,7 @@ def test_chinese_roundtrip_utf8(tmp_path):
 # ---- 3. 主副智能体调度（FR-6）----
 
 def test_main_sub_agent_dispatch(tmp_path):
-    """主线调度精选进共享池 → dispatch 全量交副线注入（FR-6）。"""
+    """主节点调度精选进共享池 → dispatch 全量交下游节点注入（FR-6）。"""
     mid = _make(tmp_path, user="u_a", sess="s1")
     _seed(mid, "m1", "多智能体记忆共享调度方法研究")
     _seed(mid, "m2", "共享池容量上限与淘汰策略调参")
@@ -112,11 +112,11 @@ def test_main_sub_agent_dispatch(tmp_path):
     assert res.kept, "应至少保留一条相关记忆进共享池"
     assert len(mid.shared_pool.top()) > 0
 
-    # 副线从共享池取全量精选集（≤10 条，不再二次检索）
+    # 下游节点从共享池取全量精选集（≤10 条，不再二次检索）
     items = mid.coordinator.dispatch(None, top_k=5)
     dispatched_ids = {i["memory_id"] for i in items}
     assert {m.memory_id for m in res.kept} <= dispatched_ids
-    assert all(i.get("text") for i in items)  # 副线拿到的是结构化记忆而非引用
+    assert all(i.get("text") for i in items)  # 下游节点拿到的是结构化记忆而非引用
 
 
 # ---- 4. 失败降级（D-11）----

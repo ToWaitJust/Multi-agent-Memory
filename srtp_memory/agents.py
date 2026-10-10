@@ -1,4 +1,4 @@
-"""主/副线 Agent 工厂（§4.8，FR-7）。
+"""主/下游节点 Agent 工厂（§4.8，FR-7）。
 
 V2.1：headless 骨架 —— 与真实 AgentScope Agent 装配（middlewares 链）在接环境时完成；
 本文件提供构建参数规格（workspace per-user、middlewares 顺序）与占位工厂。
@@ -22,7 +22,7 @@ class AgentSpec:
 
 
 def build_main_agent(model, config, user_id: str, run_id: str | None = None) -> AgentSpec:
-    """主线：workspace=data/reme/<user>/main，middlewares=[Tracing, Scheduling, main ReMe]。"""
+    """主节点：workspace=data/reme/<user>/main，middlewares=[Tracing, Scheduling, main ReMe]。"""
     return AgentSpec(
         role="main",
         workspace=f"data/reme/{user_id}/main",
@@ -34,7 +34,7 @@ def build_main_agent(model, config, user_id: str, run_id: str | None = None) -> 
 
 
 def build_sub_agent(name: str, model, config, user_id: str) -> AgentSpec:
-    """副线：workspace=data/reme/<user>/<name>，共享同一 coordinator（由装配器注入）。"""
+    """下游节点：workspace=data/reme/<user>/<name>，共享同一 coordinator（由装配器注入）。"""
     return AgentSpec(
         role=name,
         workspace=f"data/reme/{user_id}/{name}",

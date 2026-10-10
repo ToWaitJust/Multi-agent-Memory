@@ -1,0 +1,37 @@
+# graph_g4_adt_gate.yaml —— G4 + 自适应时间尺度 + 常量维门控（不做 min-max）
+#
+# 与 graph_g4 的唯一差异：attention_impl（full → adaptive_gated）。
+# 与 graph_g4_adt 的差异：额外叠加"无效维门控 + 权重再分配 + 语义保底"（仍不做 min-max）。
+#
+# 动机（LoCoMo 诊断第二步）：
+#   · task 维恒为 1.0（语料无"口径"概念）→ 零排序贡献却占 0.25 权重；
+#   · frequency 首轮恒 0（access_count=0）→ 白占 0.15。
+#   合计一半权重预算被无效维吃掉，语义维实际只拿到 0.35/1.0。
+# 对照矩阵（三者只差 attention_impl，其余逐字相同）：
+#   graph_g4            → attention.full           （固定 λ / 无门控 / 无归一化）
+#   graph_g4_adt        → attention.adaptive_time  （自适应 λ / 无门控 / 无归一化）
+#   graph_g4_norm       → attention.normalized     （固定 λ / 有门控 / **有** min-max，放大噪声）
+#   graph_g4_adt_gate   → attention.adaptive_gated （自适应 λ / 有门控 / **无** min-max）
+retriever_impl: retriever.vector
+attention_impl: attention.adaptive_gated   # ★ 与 graph_g4 的唯一差异
+weight_impl:    weight.full
+selector_impl:  selector.topk
+embedding_impl: embed.dashscope
+reward_impl:    reward.explicit
+model_impl:     model.dashscope
+conditioning_dims: [semantic, task]
+top_k: 8
+threshold: 0.0
+graph:
+  enabled: true
+  source_mode: auto
+  depth: 1
+  source_topk: 3
+  quota_mode: strength
+  quota_lambda: 0.7
+  quota_tau: 0.5
+  min_quota: 1
+budget:
+  default_tier: full
+  adaptive: false
+graph_provenance: "由 analysis/run_graph_ablation.py 从 data/graph_dataset.jsonl 固定图结构注入"

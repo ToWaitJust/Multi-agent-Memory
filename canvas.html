@@ -3,7 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SRTP · 会话画布（主副线）</title>
+<title>SRTP · 会话画布（节点与共享）</title>
+<script>
+  /* 首屏同步主题，避免刷新时闪一下白底（必须在样式表之前） */
+  (function(){try{var t=localStorage.getItem("srtp.theme");
+    if(t!=="dark"&&t!=="light"){t="dark";}   /* D-057 默认暗色 */
+    
+    /* D-061：高对比首屏同步，否则刷新会闪一下低对比 */
+    var c=localStorage.getItem("srtp.contrast");
+    if(c==="high"){document.documentElement.setAttribute("data-contrast","high");}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
+</script>
 
 <link rel="stylesheet" href="/static/app.css">
 <link rel="stylesheet" href="/static/canvas.css">
@@ -13,76 +22,45 @@
   <a class="navlink" href="/">控制台</a>
   <a class="navlink on" href="/canvas">会话画布</a>
   <a class="navlink" href="/graph">图拓扑</a>
-  <h1>会话画布 · 主副线视图</h1>
+  <h1>会话画布 · 节点与共享</h1>
   <div class="legend">
-    <span><span class="dot" style="background:var(--green)"></span>主线回合</span>
-    <span><span class="dot" style="background:var(--blue)"></span>副线回合（独立会话）</span>
-    <span><span class="dot" style="background:#7fa8c9;border-radius:50%"></span>虚线 = 记忆继承</span>
+    <span><span class="dot" style="background:var(--accent)"></span>当前节点</span>
+    <span><span class="dot" style="background:var(--brand)"></span>下游节点</span>
+    <span><span class="dot" style="background:var(--violet);border-radius:50%"></span>虚线 = 共享了上游记忆</span>
     <span style="color:var(--sub)">拖动节点调整布局 · 点击节点进入控制台</span>
   </div>
+  <span class="spacer"></span>
+  <button class="theme-btn" id="resetLayoutBtn" title="恢复默认布局（清空已拖动的位置）" aria-label="恢复默认布局">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+  </button>
+  <button class="theme-btn" id="contrastBtn" title="高对比模式（强光/投影下更清晰）" aria-label="切换高对比模式">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z" fill="currentColor" stroke="none"/></svg>
+  </button>
+  <button class="theme-btn" id="themeBtn" title="切换暗色/亮色" aria-label="切换暗色或亮色">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+  </button>
 </header>
 
 <div class="stagewrap">
-  <div class="stage" id="stage"><div class="empty" id="stageEmpty" style="padding:60px 24px;text-align:center;color:var(--sub);font-size:13px;line-height:2">还没有会话画布。<br>先在「控制台」提一个问题产生主线回合，再在回合节点上「创建副线」即可看到继承关系。<br>画布上的虚线表示副线继承的口述记忆。</div>
+  <div class="stage" id="stage"><div class="empty" id="stageEmpty">
+      <div class="cv-art" aria-hidden="true">
+        <svg viewBox="0 0 150 74" fill="none" stroke="currentColor" stroke-width="1.6">
+          <rect x="8" y="30" width="42" height="26" rx="6"/>
+          <rect x="98" y="14" width="42" height="24" rx="6" opacity=".7"/>
+          <rect x="98" y="46" width="42" height="22" rx="6" opacity=".5"/>
+          <path d="M50 40h20a6 6 0 0 1 6 6v2" stroke-dasharray="4 3"/>
+          <path d="M50 46h14a6 6 0 0 0-6-6" stroke-dasharray="4 3" opacity=".6"/>
+        </svg>
+      </div>
+      <b>还没有会话画布</b>
+      <p>一个问答回合 = 一个节点；下游节点通过<b>共享上游记忆</b>获得额外上下文，可独立问答。</p>
+      <p class="dim">先在「控制台」提一个问题产生节点，再在回合上「创建下游节点」，即可看到跨节点共享链路。</p>
+    </div>
     <svg id="cv" xmlns="http://www.w3.org/2000/svg"></svg>
-  </div>
-  <div class="floattip">一个问答回合 = 一个节点 · 副线是继承主线记忆的独立可问答线路 · 点击节点进入节点控制台（上下历史/追问/创建副线）</div>
-</div>
-
-<script>
-let H = null;
-const NS = "http://www.w3.org/2000/svg";
-const NW = 152, NH = 50, GAP = 186;          // 主线节点（像素固定）
-const SW = 134, SH = 46, SGAP = 160;         // 副线节点
-const MAIN_Y = 52, LANE0 = 196, LANE_GAP = 116;
-const NODE_POS = {};                          // session|round -> {x,y} 供平移定位
-
-function el(tag, attrs, text) {
-  const e = document.createElementNS(NS, tag);
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
-  if (text != null) e.textContent = text;
-  return e;
-}
-function fmtTs(ts){const d=new Date(ts*1000);
-  return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`}
-function short(t,n){return t.length>n ? t.slice(0,n)+"…" : t}
-function sessionById(sid){
-  if (H.main.session_id === sid) return H.main;
-  return H.subs.find(s => s.session_id === sid);
-}
-
-/* 布局：主线一行；每条副线独立泳道，首节点对齐其继承源。
-   每个节点可带用户拖拽产生的偏移（H.layout["sid|rid"]={dx,dy}），落盘后重启仍在。 */
-function layout(){
-  const OFFS = H.layout || {};
-  const off = k => { const o = OFFS[k]; return o ? {dx:o.dx||0, dy:o.dy||0} : {dx:0, dy:0}; };
-  const mains = H.main.rounds;
-  const mx = mains.map((r, i) => {
-    const o = off("canvas_main|" + r.round_id);
-    return {x: 44 + i * GAP + o.dx, y: MAIN_Y + o.dy};
-  });
-  let W = 44 + mains.length * GAP + 60;
-  let maxY = MAIN_Y + NH;
-  const lanes = [];
-  H.subs.forEach((s, li) => {
-    const y0 = LANE0 + li * LANE_GAP;
-    const pIdx = mains.findIndex(r => r.round_id === (s.derived_from || s.parent));
-    const x0 = Math.max(44, (pIdx >= 0 ? mx[pIdx].x : 44) - 6);
-    const xs = s.rounds.map((r, i) => {
-      const o = off(s.session_id + "|" + r.round_id);
-      return {x: x0 + i * SGAP + o.dx, y: y0 + o.dy};
-    });
-    W = Math.max(W, xs.at(-1).x + SGAP + 40);
-    maxY = Math.max(maxY, ...xs.map(p => p.y + SH));
-    lanes.push({y0, xs, pIdx});
-  });
-  maxY = Math.max(maxY, ...mx.map(p => p.y + NH));
-  return {mx, lanes, W, Hh: Math.max(maxY + 56, LANE0 + Math.max(0, H.subs.length - 1) * LANE_GAP + SH + 56)};
-}
-
-function draw(){
-  const svg = document.getElementById("cv");
-  svg.innerHTML = "";
-  const {mx, lanes, W, Hh} = layout();
-  svg.setAttribute("viewBox", `0 0 ${Math.max(W, 1100)} ${Hh}`);
-  svg.setAttribute("<script src="/static/canvas.js"></script>
+<script src="/static/theme.js"></script>
+<script src="/static/canvas.js"></script>
+</body>
+</html>

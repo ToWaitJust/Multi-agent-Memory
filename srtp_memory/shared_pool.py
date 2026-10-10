@@ -1,7 +1,7 @@
 """共享记忆池（§4.5，FR-6/FR-7）。
 
-调度层精选的 ≤10 条"已排序高相关集"，持久化到副线 workspace（data/reme/<user>/sub*/shared_pool.json）。
-V2.1：无 query() —— 副线吃全量精选集（top() 全给），不二次检索（保持"排序/选择为唯一变量"消融常量）。
+调度层精选的 ≤10 条"已排序高相关集"，持久化到下游节点 workspace（data/reme/<user>/sub*/shared_pool.json）。
+V2.1：无 query() —— 下游节点吃全量精选集（top() 全给），不二次检索（保持"排序/选择为唯一变量"消融常量）。
 """
 from __future__ import annotations
 
@@ -29,11 +29,11 @@ class SharedMemoryPool:
         return item in self._items
 
     def top(self) -> list[dict[str, Any]]:
-        """返回当前保留的全部条目（≤max_size），供副线中间件注入 HintBlock。"""
+        """返回当前保留的全部条目（≤max_size），供下游节点中间件注入 HintBlock。"""
         return list(self._items)
 
     def clear(self) -> None:
-        """清空池（会话重置 / 主副线切换时调用）。"""
+        """清空池（会话重置 / 主下游节点切换时调用）。"""
         self._items.clear()
 
     def persist(self) -> None:

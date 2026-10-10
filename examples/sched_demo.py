@@ -1,4 +1,4 @@
-"""端到端演示（§3.3 / §4.10 验收用例）：主线写入 → 协调层调度 → 共享池 → 副线读取。
+"""端到端演示（§3.3 / §4.10 验收用例）：节点写入 → 协调层选源 → 共享记忆 → 下游节点读取。
 
 验证 D5 验收子项：全链路跑通 + 四维打分/混合/选择 + 指标落盘。
 用法: python examples/sched_demo.py
@@ -38,7 +38,7 @@ def main() -> None:
     print("\n[1] 中间件装配完成:", cfg.retriever_impl, "/", cfg.attention_impl,
           "/", cfg.weight_impl, "/", cfg.selector_impl)
 
-    # 2. 主线"对话"沉淀记忆（真实场景由 ReMe auto_memory 写卡片后 upsert 进常驻池）
+    # 2. 节点"对话"沉淀记忆（真实场景由 ReMe auto_memory 写卡片后 upsert 进私有记忆池）
     now = time.time()
     memories = [
         MemoryCandidate(memory_id="m_tech", text="技术栈：AgentScope 2.0 + ReMe + DashScope embedding",
@@ -55,7 +55,7 @@ def main() -> None:
         mid.resident_pool.upsert(m)
     print(f"[2] 常驻池写入 {len(memories)} 条记忆（per-user: u_tu）")
 
-    # 3. 副线提问 → 调度（pre_schedule：检索→打分→权重→选择）
+    # 3. 下游节点提问 → 调度（pre_schedule：检索→打分→权重→选源）
     query = "我们的项目现在用什么技术栈？"
     q_emb = np.zeros(cfg.embedding_dimensions, dtype=np.float32)
     q_emb[0] = 1.0
@@ -67,8 +67,8 @@ def main() -> None:
           f"（压缩比 {res.compression_ratio:.2f}）")
     print(f"    动态权重: { {k: round(v,3) for k,v in res.weights.items()} }")
 
-    # 4. 副线读取共享池（dispatch = 注入 HintBlock 的内容）
-    print("\n[4] 副线注入内容（共享池 top() 全量）:")
+    # 4. 下游节点读取共享记忆（dispatch = 注入 HintBlock 的内容）
+    print("\n[4] 下游节点注入内容（共享记忆 top() 全量）:")
     for item in mid.shared_pool.top():
         print(f"    - {item['text']}  ({item['path']}:{item['start_line']}-{item['end_line']})")
 

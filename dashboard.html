@@ -4,7 +4,15 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>节点控制台 · SRTP 多智能体记忆共享调度</title>
-
+<script>
+  /* 首屏同步主题，避免刷新时闪一下白底（必须在样式表之前） */
+  (function(){try{var t=localStorage.getItem('srtp.theme');
+    if(t!=='dark'&&t!=='light'){t='dark';}   /* D-057 默认暗色 */
+    
+    /* D-061：高对比首屏同步，否则刷新会闪一下低对比 */
+    var c=localStorage.getItem('srtp.contrast');
+    if(c==='high'){document.documentElement.setAttribute('data-contrast','high');}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+</script>
 <link rel="stylesheet" href="/static/app.css">
 <link rel="stylesheet" href="/static/dashboard.css">
 </head>
@@ -13,28 +21,46 @@
     <a class="navlink on" href="/">控制台</a>
     <a class="navlink" id="canvasLink" href="/canvas">会话画布</a>
     <a class="navlink" href="/graph">图拓扑</a>
-    <h1>节点控制台 · 多智能体记忆共享调度</h1>
-    <span class="sub">节点上下文历史 · 常驻池全量只读 · 调度精选 ≤10 写入共享池</span>
+    <h1>控制台 · 跨节点记忆共享调度</h1>
+    <span class="sub">图结构下的节点视图 · 调度按 query 选源，把命中节点的记忆共享过来</span>
     <span class="spacer"></span>
     <span id="modeBadge" class="badge headless">检测中…</span>
+    <button class="theme-btn" id="contrastBtn" title="高对比模式（强光/投影下更清晰）" aria-label="切换高对比模式"></button>
+    <button class="theme-btn" id="themeBtn" title="切换暗色/亮色" aria-label="切换暗色或亮色"></button>
   </header>
 
   <main class="layout">
     <!-- 左：当前节点所在会话的上下文历史 -->
     <section class="ctx">
       <div class="sessbar" id="sessbar"></div>
-      <div class="messages" id="messages"><div class="empty">还没有会话记录。<br>在下方输入框提一个问题，即可看到真实的四维打分 / 混合权重 / 共享池注入明细；也可以先去「图拓扑」页看看 14 个会话节点之间的依赖结构。</div></div>
+      <div class="messages" id="messages">
+        <div class="empty">
+          <div class="empty-art" aria-hidden="true">
+            <svg viewBox="0 0 120 72" fill="none" stroke="currentColor" stroke-width="1.6">
+              <rect x="6" y="10" width="34" height="24" rx="5"/>
+              <rect x="80" y="38" width="34" height="24" rx="5"/>
+              <rect x="6" y="44" width="34" height="18" rx="5" opacity=".45"/>
+              <path d="M40 22h22a8 8 0 0 1 8 8v14" stroke-dasharray="4 3"/>
+              <path d="M40 52h14a6 6 0 0 1 6 6v4" stroke-dasharray="4 3" opacity=".45"/>
+            </svg>
+          </div>
+          <b>还没有会话记录</b>
+          <p>在上方选择一个会话节点，然后提问 —— 右侧会展示这一轮<b>真实</b>的调度明细：<br>
+             常驻池召回 → 四维打分 → 混合权重 → 排行榜 → 精选 ≤10 条写入共享池。</p>
+          <p class="dim">想先看结构？去「图拓扑」页看会话之间的依赖关系与选源过程。</p>
+        </div>
+      </div>
       <form class="composer" id="composer">
-        <input id="q" placeholder="在该节点所在会话继续追问（会走真实调度流水线）" autocomplete="off" />
-        <button type="submit" id="send">发送</button>
+        <input id="q" placeholder="请先在上方选择一个会话节点" autocomplete="off" />
+        <button type="submit" id="send" disabled>先选会话</button>
       </form>
       <div class="subcreate" id="subcreate">
-        <div class="cap">从主线 <span id="subFromRid">-</span> 创建副线（按第一问调度记忆 · 独立线路）</div>
+        <div class="cap">从当前节点 <span id="subFromRid">-</span> 创建下游节点（按第一问选源并共享记忆）</div>
         <div class="row">
-          <input id="nsTitle" placeholder="副线名称（留空自动生成）" />
+          <input id="nsTitle" placeholder="下游节点名称（留空自动生成）" />
         </div>
         <div class="row">
-          <input id="nsQuery" placeholder="副线的第一问 —— 记忆调度将按它进行" />
+          <input id="nsQuery" placeholder="下游节点的第一问 —— 调度按它选源并共享记忆" />
           <button class="go" id="nsGo">创建</button>
         </div>
       </div>
@@ -44,229 +70,66 @@
     <section class="viz">
       <div class="stepper" id="stepper">
         <div class="node" data-s="input"><div class="t">用户输入</div><div class="d">节点内追问</div></div>
-        <div class="node" data-s="recall"><div class="t">常驻池召回</div><div class="d">向量检索候选</div></div>
+        <div class="node" data-s="recall"><div class="t">私有记忆召回</div><div class="d">向量检索候选</div></div>
         <div class="node" data-s="score"><div class="t">四维打分</div><div class="d">时间/语义/频率/任务</div></div>
         <div class="node" data-s="weight"><div class="t">混合权重</div><div class="d">α·先验+β·学习</div></div>
         <div class="node" data-s="rank"><div class="t">排行榜</div><div class="d">final 排序</div></div>
-        <div class="node" data-s="select"><div class="t">选择≤10</div><div class="d">写入共享池</div></div>
-        <div class="node" data-s="answer"><div class="t">节点 Agent</div><div class="d">基于常驻池+精选记忆作答</div></div>
+        <div class="node" data-s="select"><div class="t">选源并共享</div><div class="d">精选 ≤10 条注入</div></div>
+        <div class="node" data-s="answer"><div class="t">节点 Agent</div><div class="d">基于私有 + 共享记忆作答</div></div>
       </div>
 
       <div class="poolmap">
         <svg id="poolsvg" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet">
           <defs>
             <linearGradient id="rg" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stop-color="#f3faf7"/><stop offset="1" stop-color="#eef6f2"/>
+              <stop class="rg-a" offset="0" stop-color="#888"/><stop class="rg-b" offset="1" stop-color="#666"/>
             </linearGradient>
             <linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stop-color="#eef4ff"/><stop offset="1" stop-color="#e8f0ff"/>
+              <stop class="sg-a" offset="0" stop-color="#777"/><stop class="sg-b" offset="1" stop-color="#555"/>
             </linearGradient>
+            <!-- D-057：光晕滤镜，让"本轮选中"的记忆在深底上跳出来 -->
+            <filter id="ptGlow" x="-90%" y="-90%" width="280%" height="280%">
+              <feGaussianBlur stdDeviation="5" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
           </defs>
-          <rect x="20" y="40" width="450" height="470" rx="12" fill="url(#rg)" stroke="#d7e7e0"/>
-          <rect x="530" y="40" width="450" height="470" rx="12" fill="url(#sg)" stroke="#d7e2f5"/>
-          <text x="245" y="30" text-anchor="middle" font-size="14" fill="#0d8a6b" font-weight="700">常驻完整池 · Resident（全量只读 / 主线在此作答）</text>
-          <text x="755" y="30" text-anchor="middle" font-size="14" fill="#2563eb" font-weight="700">共享池 · Shared（调度精选 ≤10 / 供副线继承）</text>
+          <rect x="20" y="40" width="450" height="470" rx="14" fill="url(#rg)" class="pool-r" stroke="#888"/>
+          <rect x="530" y="40" width="450" height="470" rx="14" fill="url(#sg)" class="pool-s" stroke="#777"/>
+          <text x="245" y="30" text-anchor="middle" font-size="14" fill="var(--brand-d)" font-weight="600">节点私有记忆 · 全量只读</text>
+          <text x="755" y="30" text-anchor="middle" font-size="14" fill="var(--accent)" font-weight="600">共享记忆 · 调度精选 ≤10</text>
           <g id="flows"></g>
           <g id="residentDots"></g>
           <g id="sharedDots"></g>
-          <text x="500" y="545" text-anchor="middle" font-size="10.5" fill="#94a3b8">主线 Agent 读常驻池全量作答；调度层精选 ≤10 条写入共享池，副线创建时按第一问继承这批记忆。</text>
+          <text x="500" y="546" text-anchor="middle" font-size="10.5" fill="var(--mute)">一条记忆归属一个节点，可被多个节点共享 —— 调度按当前 query 选源，把命中节点的记忆共享过来。</text>
         </svg>
         <div class="legend">
-          <span><i style="background:var(--profile)"></i>profile</span>
-          <span><i style="background:var(--tech)"></i>tech_stack</span>
-          <span><i style="background:var(--arch)"></i>architecture</span>
-          <span><i style="background:var(--research)"></i>research</span>
-          <span><i style="background:var(--daily)"></i>daily</span>
-          <span><i style="background:var(--blue)"></i>● 本轮召回候选</span>
-          <span><i style="background:var(--green)"></i>◆ 本轮保留(动画连线)</span>
-          <span><i style="background:#fff;border:1.5px solid var(--blue)"></i>○ 历史留存</span>
-          <span><i style="background:#e6f1fb;border:1.5px dashed #378add"></i>▓ 副线继承记忆（蓝色虚线连线，随所选副线刷新）</span>
+          <span><i style="background:#6b74f0"></i>● 未命中</span>
+          <span><i style="background:#8b93ff;box-shadow:0 0 8px rgba(139,147,255,.8)"></i>● 本轮召回候选</span>
+          <span><i style="background:#22d3ee;box-shadow:0 0 10px rgba(34,211,238,.9)"></i>◆ 本轮选中并共享</span>
+          <span><i style="background:#a78bfa;border:1.5px dashed #a78bfa"></i>虚线 = 该记忆来自上游源节点</span>
+          <span style="color:var(--mute)">散点颜色 = 记忆归属的节点</span>
         </div>
       </div>
 
       <div class="detail" id="detail">
-        <div class="empty">在左侧节点会话中追问，这里展示该回合的真实调度明细（四维打分 / 混合权重 / 共享池写入）。</div>
+        <div class="empty">在左侧节点会话中追问，这里展示该回合的真实调度明细（四维打分 / 混合权重 / 选源与共享）。</div>
       </div>
     </section>
   </main>
 
-  <!-- 创建副线：全流程过渡（主线节点 → 记忆调度 → 副线控制台就绪） -->
+  <!-- 创建下游节点：全流程过渡（当前节点 → 选源与共享 → 节点就绪） -->
   <div class="flowov" id="flowov">
-    <div class="cap" id="flowCap">正在创建副线…</div>
+    <div class="cap" id="flowCap">正在创建下游节点…</div>
     <div class="flowsteps">
-      <div class="fstep" id="fs1"><div class="t">主线源节点</div><div class="d" id="fs1d">-</div></div>
+      <div class="fstep" id="fs1"><div class="t">当前节点</div><div class="d" id="fs1d">-</div></div>
       <div class="fsep">›</div>
-      <div class="fstep" id="fs2"><div class="t">记忆调度（按第一问）</div><div class="d" id="fs2d">-</div></div>
+      <div class="fstep" id="fs2"><div class="t">选源与共享（按第一问）</div><div class="d" id="fs2d">-</div></div>
       <div class="fsep">›</div>
-      <div class="fstep" id="fs3"><div class="t">副线控制台就绪</div><div class="d" id="fs3d">-</div></div>
+      <div class="fstep" id="fs3"><div class="t">节点就绪</div><div class="d" id="fs3d">-</div></div>
     </div>
   </div>
 
-<script>
-"use strict";
-const $ = s => document.querySelector(s);
-const svgns = "http://www.w3.org/2000/svg";
-const TAGCOL = {profile:"#6366f1",tech_stack:"#0ea5e9",architecture:"#10b981",research:"#f59e0b",daily:"#9ca3af",
-  project:"#8b5cf6",main_task:"#8b5cf6",attention:"#10b981",weight:"#f59e0b",reme:"#0ea5e9",embedding:"#0ea5e9",
-  share:"#ef4444",retrieval:"#0ea5e9",ablation:"#f59e0b",architecture2:"#10b981"};
-
-let H = null;                       // 画布历史（会话 + 回合）
-let CUR = null;                     // {session_id, round_id}
-const params = new URLSearchParams(location.search);
-
-function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-function sessionById(sid){
-  if (H.main.session_id === sid) return H.main;
-  return H.subs.find(s => s.session_id === sid);
-}
-function isMain(sid){ return H.main.session_id === sid; }
-function fmtTs(ts){const d=new Date(ts*1000);
-  return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`}
-
-function setStage(name){
-  const order=["input","recall","score","weight","rank","select","answer"];
-  const i=order.indexOf(name);
-  document.querySelectorAll('#stepper .node').forEach(n=>{
-    const j=order.indexOf(n.dataset.s);
-    n.classList.remove('active','done','cur');
-    if(j<i) n.classList.add('done');
-    else if(j===i) n.classList.add('active','cur');
-  });
-}
-function resetStage(){ setStage('input'); }
-
-// ---- 左侧：会话标签 + 上下文历史 ----
-function renderTabs(){
-  const bar=$('#sessbar'); bar.innerHTML='';
-  const mk=(sid,title,n)=>{
-    const b=document.createElement('button');
-    b.className='stab'+(CUR&&CUR.session_id===sid?' active':'');
-    b.innerHTML=`${esc(title)}<span class="n">${n}轮</span>`;
-    b.onclick=()=>selectSession(sid);
-    bar.appendChild(b);
-  };
-  mk(H.main.session_id, '主线', H.main.rounds.length);
-  H.subs.forEach(s=>mk(s.session_id, s.title.replace(/^副线 · /,''), s.rounds.length));
-}
-
-function selectSession(sid, rid){
-  const sess=sessionById(sid);
-  if(!sess) return;
-  CUR={session_id:sid, round_id: rid || sess.rounds[sess.rounds.length-1].round_id};
-  // 同步 URL：刷新/分享都能回到当前节点控制台
-  history.replaceState(null, '', '/?session='+encodeURIComponent(sid)+'&round='+encodeURIComponent(CUR.round_id));
-  renderTabs();
-  const main=isMain(sid);
-  const box=$('#messages'); box.innerHTML='';
-  const cap=document.createElement('div'); cap.className='ctxcap';
-  cap.innerHTML = main
-    ? `<b>主线会话</b> · 常驻完整池全量只读，追问基于调度精选记忆作答，每回合是一个画布节点。`
-    : `<b>${esc(sess.title)}</b> · 独立副线，创建时从主线 ${esc(sess.derived_from||'')} 继承了一批精选记忆。`;
-  box.appendChild(cap);
-  // 副线：记忆来源卡（源节点可点击跳回主线该回合）
-  if(!main){
-    const src=document.createElement('div'); src.className='srccard';
-    const srcRound=H.main.rounds.find(r=>r.round_id===(sess.derived_from||sess.parent));
-    const inherited=(sess.inherited && sess.inherited.length) ? sess.inherited
-      : ((sess.rounds[0]&&sess.rounds[0].inherited)||[]);
-    let html=`<div class="cap">记忆来源 · 记忆继承链路</div>
-      <span class="srcnode" onclick="selectSession('${H.main.session_id}','${esc(sess.derived_from||sess.parent||'')}')">
-        <span class="arr">↩</span>主线 ${esc(sess.derived_from||sess.parent||'?')}${srcRound? ' · '+esc(srcRound.title||''):''}</span>`;
-    if(inherited.length){
-      html+=`<div class="srclen">创建时按第一问「${esc((sess.rounds[0]&&sess.rounds[0].user)||'')}」调度继承 <b>${inherited.length}</b> 条记忆：</div>
-        <div class="srcchips">${inherited.map(t=>`<div class="c">· ${esc(t)}</div>`).join('')}</div>`;
-    }else{
-      html+=`<div class="srcnote">演示数据未附继承清单 —— 在主线选中回合现场创建副线，可看到完整的"按第一问调度 → 继承记忆"效果。</div>`;
-    }
-    src.innerHTML=html;
-    box.appendChild(src);
-  }
-  sess.rounds.forEach(r=>{
-    box.appendChild(roundCard(sess, r, r.round_id===CUR.round_id));
-  });
-  // 创建副线入口：仅主线回合
-  const sc=$('#subcreate');
-  if(main){ sc.classList.add('show'); $('#subFromRid').textContent=CUR.round_id; }
-  else sc.classList.remove('show');
-  const curEl=box.querySelector('.msg.cur');
-  if(curEl) curEl.scrollIntoView({block:'center'});
-  box.scrollTop=box.scrollHeight;
-  // 返回画布时高亮当前节点
-  $('#canvasLink').href='/canvas?hl='+encodeURIComponent(CUR.session_id+'|'+CUR.round_id);
-  // 双池视图随会话刷新：副线显示其继承记忆连线
-  updatePoolView();
-}
-
-function roundCard(sess, r, isCur){
-  const main=isMain(sess.session_id);
-  const d=document.createElement('div');
-  d.className='msg '+(main?'assistant':'assistant')+(isCur?' cur':'');
-  const who=main?'主线 Agent':'副线 Agent（基于继承/共享池记忆）';
-  const w=document.createElement('div'); w.className='who';
-  w.innerHTML=`<span class="rid">${esc(r.round_id)}</span><span>${esc(r.title||'')}</span><span>${fmtTs(r.ts)}</span>`;
-  d.appendChild(w);
-  const u=document.createElement('div'); u.className='msg user';
-  const uw=document.createElement('div'); uw.className='who'; uw.textContent='用户';
-  const ub=document.createElement('div'); ub.className='bubble'; ub.textContent=r.user;
-  u.appendChild(uw); u.appendChild(ub); d.appendChild(u);
-  const ab=document.createElement('div'); ab.className='bubble'; ab.textContent=r.assistant;
-  const aw=document.createElement('div'); aw.className='who'; aw.textContent=who;
-  d.appendChild(aw); d.appendChild(ab);
-  if(r.inherited && r.inherited.length){
-    const ih=document.createElement('div'); ih.className='inh';
-    ih.textContent='继承的记忆：\n'+r.inherited.map(t=>'· '+t).join('\n');
-    d.appendChild(ih);
-  }
-  return d;
-}
-
-// ---- 右侧：双池语义地图 ----
-function scaleX(zx,isShared){ return isShared? 530+zx*430 : 20+zx*450; }
-function scaleY(zy){ return 40+zy*450; }
-function renderPools(resident, shared, recalledIds, keptIds, maxShared, extra){
-  const rg=$('#residentDots'), sg=$('#sharedDots'), fg=$('#flows');
-  rg.innerHTML=''; sg.innerHTML=''; fg.innerHTML='';
-  const rec=new Set(recalledIds), kep=new Set(keptIds);
-  const coord={};
-  resident.forEach(m=>{
-    const cx=scaleX(m.x,false), cy=scaleY(m.y);
-    coord[m.id]={x:cx, y:cy};
-    const recalled=rec.has(m.id), kept=kep.has(m.id);
-    const c=document.createElementNS(svgns,'circle');
-    c.setAttribute('cx',cx); c.setAttribute('cy',cy);
-    c.setAttribute('r', recalled? 7 : 4.5);
-    c.setAttribute('fill', TAGCOL[m.tag]||'#9ca3af');
-    c.setAttribute('stroke', kept? '#10a37f' : '#ffffff');
-    c.setAttribute('stroke-width', kept? 2.5 : 1);
-    if(recalled) c.setAttribute('class','recalled');
-    const t=document.createElementNS(svgns,'title');
-    t.textContent=`${m.text} [${m.tag}] age=${m.age_h}h`
-      + (kept? ' · 本轮保留进共享池' : (recalled? ' · 本轮召回候选' : ''));
-    c.appendChild(t); rg.appendChild(c);
-  });
-  // 副线继承连线：常驻池 → 共享池侧虚位（蓝色虚线，随所选副线刷新）
-  (extra||[]).forEach(m=>{
-    const from=coord[m.id];
-    if(!from) return;
-    const cx=scaleX(m.x,true), cy=scaleY(m.y);
-    const ln=document.createElementNS(svgns,'line');
-    ln.setAttribute('x1',from.x); ln.setAttribute('y1',from.y);
-    ln.setAttribute('x2',cx); ln.setAttribute('y2',cy);
-    ln.setAttribute('stroke','#378add'); ln.setAttribute('stroke-width','1.7');
-    ln.setAttribute('stroke-dasharray','6 5'); ln.setAttribute('class','inheritline');
-    fg.appendChild(ln);
-    const c=document.createElementNS(svgns,'circle');
-    c.setAttribute('cx',cx); c.setAttribute('cy',cy); c.setAttribute('r',6);
-    c.setAttribute('fill','#e6f1fb'); c.setAttribute('stroke','#378add'); c.setAttribute('stroke-width','1.8');
-    c.setAttribute('class','inheritdot');
-    const t=document.createElementNS(svgns,'title');
-    t.textContent=`当前副线继承记忆：${m.text||m.id}`;
-    c.appendChild(t); sg.appendChild(c);
-    const lab=document.createElementNS(svgns,'text');
-    lab.setAttribute('x',cx+9); lab.setAttribute('y',cy+4); lab.setAttribute('font-size','11');
-    lab.setAttribute('fill','#378add'); lab.textContent='继';
-    sg.appendChild(lab);
-  });
-  shared.slice().sort((a,b)=>b.score-a.score).forEach((m,idx)=>{
-    const cx=scaleX(m.x,true), cy=scaleY(m.y);
-    const active=kep.has(m.id<script src="/static/dashboard.js"></script>
+<script src="/static/theme.js"></script>
+<script src="/static/dashboard.js"></script>
+</body>
+</html>

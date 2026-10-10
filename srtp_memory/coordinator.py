@@ -1,6 +1,6 @@
 """调度编排（§4.6，FR-5/6/7 总装配）+ 图架构 Stage A（优化方案 §4）。
 
-MemoryCoordinator 持常驻完整池（resident_pool，per-user 真池）+ 检索插件（retriever）
+MemoryCoordinator 持节点私有记忆（resident_pool，per-user 真池）+ 检索插件（retriever）
 + 四维打分器 + 混合权重 + 选择器 + 共享池；按 (user_id, session_id) 隔离。
 不持有 ReMeMiddleware（检索由 retriever 在常驻池上接管，D-9）。
 
@@ -279,7 +279,7 @@ class MemoryCoordinator:
         return self.retriever.recall(query, scope, top_k=top_k)
 
     def dispatch(self, sub_agent, top_k: int = 10) -> list[dict]:
-        """共享池 top() 全量（≤10）格式化后交副线中间件注入 HintBlock。"""
+        """共享池 top() 全量（≤10）格式化后交下游节点中间件注入 HintBlock。"""
         return self.shared_pool.top()[:top_k]
 
     def bookmark(self, memory: MemoryCandidate) -> dict:

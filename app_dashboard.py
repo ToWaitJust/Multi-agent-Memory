@@ -6,9 +6,9 @@
 
 后端: stdlib http.server（零新依赖）。POST /api/chat 用真实 DashScope embedding +
 DeepSeek LLM 先验跑一轮调度，SSE 依次推送 schedule / pools / sublines / answer_delta / done
-事件；前端渲染 7 阶段调度流、双池向量库 PCA 投影、副线书签与流式回答。
+事件；前端渲染 7 阶段调度流、记忆池 PCA 投影、下游节点书签与流式回答。
 
-智能体: 主线与两条副线由真实 AgentScope 2.0.6 Agent 驱动（见 srtp_memory/agentscope_runtime.py），
+智能体: 主节点与下游节点由真实 AgentScope 2.0.6 Agent 驱动（见 srtp_memory/agentscope_runtime.py），
 装配 Toolkit（Read/Write/Edit/Glob/Grep/Bash）+ BYPASS 权限，可真实读写文件与执行命令；
 缺 agentscope 或缺 DEEPSEEK_API_KEY 时自动降级 headless，页面顶部标注 agent_mode。
 
@@ -40,7 +40,7 @@ from srtp_memory.middleware import MemorySchedulingMiddleware
 from srtp_memory.plugins import get_plugin, register_all
 from srtp_memory.weights import DEFAULT_WEIGHTS
 
-import demo_canvas  # 会话画布：模拟主副线聊天历史 + 画布记忆种子（data/demo/canvas_history.json）
+import demo_canvas  # 会话画布：模拟节点/共享聊天历史 + 画布记忆种子（data/demo/canvas_history.json）
 from srtp_memory.agentscope_runtime import SchedulingRuntime, AGENTSCOPE_AVAILABLE
 
 register_all()
@@ -116,7 +116,7 @@ TEST_QUERIES = [
     ("今天天气怎么样适合出门散步吗？", "daily"),
 ]
 
-# ---- 回答生成（REQ-502：副线吃共享池精选记忆生成回答，防"胡言乱语"） ----
+# ---- 回答生成（REQ-502：节点吃共享记忆生成回答，防"胡言乱语"） ----
 ANSWER_PROMPT = (
     "你是基于记忆库回答的助手。下面是调度精选出的相关记忆：\n{ctx}\n\n"
     "用户问题：{query}\n"
@@ -129,7 +129,9 @@ ANSWER_MAX_TOKENS = 512
 def _answer_with(client, query: str, ctx: str) -> str:
     """用 LLM client 基于精选记忆生成回答（client 复用中间件装配的真实模型）。
 
-    deepseek-v4-flash 偶发返回空内容：空回复自动重试一次，仍空则标注，避免页面留白。
+    deepseek-flash 偶尔返回空内容（思考 token 吃光 max_tokens 的边缘情况，
+    D-060 实测：短 prompt + 512 上限时概率性发生）：空回复自动重试一次，
+    仍空则标注，避免页面留白。适配器侧也会把空 content 记进 last_error 供监控。
     """
     prompt = ANSWER_PROMPT.format(ctx=ctx, query=query)
     text = client.complete(prompt, max_tokens=ANSWER_MAX_TOKENS).strip()
@@ -188,17 +190,86 @@ def _get_mid() -> MemorySchedulingMiddleware:
             timestamp=now - ago, task_tag=tag,
             user_id="u_tu", session_id="chat_vis",
             embedding=emb))
-    # 种入会话画布的聊天记忆（mc_*：来自模拟主副线聊天，演示时可被真实调度召回）
+    # 种入会话画布的聊天记忆（mc_*：来自模拟节点聊天，演示时可被真实调度召回）
     try:
         demo_canvas.seed_memories(mid)
     except Exception:  # noqa: BLE001 - 画布种子失败不阻断控制台
         pass
     _MID = mid
+    _seed_showcase(mid)          # D-058：预置一轮真实演示（招新/展示用）
     return mid
 
 
+#: D-058 预置演示用的查询。挑这句是因为它**必须命中多个会话节点**才能看出
+#: "跨节点共享"（只命中单节点的话，记忆池与图页都看不出共享效果）。
+SHOWCASE_QUERY = "跨会话的结论是怎么沉淀下来、又被后续节点复用的？"
+_SHOWCASE_DONE = False
+
+
+def _seed_showcase(mid: MemorySchedulingMiddleware) -> None:
+    """启动时预置一轮**真实调度**，让演示进站即有内容（D-058）。
+
+    为什么必须做：招新/展示的第一眼决定印象，而空页面 = "这软件没东西"。
+    原来是「进来先选节点 → 手打一句长问 → 等几秒」，展示现场节奏断、还容易打错。
+
+    幂等：只在进程内跑一次；`SRTP_NO_SEED=1` 可关闭（便于跑自动化测试时提速）。
+    失败不抛 —— 演示数据不是必需品，绝不能因为它把服务起不来。
+    """
+    global _SHOWCASE_DONE
+    if _SHOWCASE_DONE or os.environ.get("SRTP_NO_SEED"):
+        return
+    _SHOWCASE_DONE = True
+    try:
+        h = demo_canvas.load_or_create()
+        main_rounds = (h.get("main") or {}).get("rounds") or []
+        # 已经问过同一句就别重复播种（保留讲解人自己聊的内容）。
+        # 判据用 `user` 而不是 `title`：append_round 返回的是**副本**，
+        # 在返回对象上改 title 不会写回历史（实测踩过）。
+        if any(r.get("user") == SHOWCASE_QUERY for r in main_rounds):
+            return
+        res = mid.schedule_once(SHOWCASE_QUERY, task_tag=None, now=time.time())
+        kept = [m.text for m in res.kept]
+        # D-058：**展示用回答走固定文案**，不调 LLM。
+        # 实测：demo 记忆偏技术实现，LLM 会答成 JSON 格式的实现文档
+        #（"memory_id 为 UUID"、"结论撰写：…实时落盘"），对同学展示是灾难。
+        # 预置文案质量可控且能嵌真实选中的记忆；现场自己发问仍走真实 LLM。
+        bullets = "\n".join(f"- {t}" for t in kept[:5]) or "- （本轮没有命中记忆）"
+        answer = (
+            f"这一轮我按你的问题在图上**选源**，从 {len(res.candidates)} 条候选里"
+            f"挑出了 {len(kept)} 条共享给当前节点（压缩比 {res.compression_ratio:.2f}）。\n\n"
+            f"它们来自这些会话节点：\n{bullets}\n\n"
+            f"注意这些记忆**并没有被搬过来** —— 每条仍归属原节点，"
+            f"只是这一轮被选为源、对当前节点可见。"
+            f"换一个问题，选中的源节点就会变。"
+        )
+        # 把本轮调度明细一起存进回合（D-058）：进站时右侧明细区直接有内容，
+        # 不用现场重跑。字段与 renderDetail 期望的结构保持一致。
+        kept_ids = {m.memory_id for m in res.kept}
+        prior = getattr(mid.weights, "_cached_prior", None) or {}
+        detail = {
+            "query": SHOWCASE_QUERY,
+            "kept_count": len(res.kept),
+            "compression_ratio": round(res.compression_ratio, 3),
+            "llm_prior": {k: round(v, 3) for k, v in prior.items()},
+            "weights": {k: round(v, 3) for k, v in res.weights.items()},
+            "kept_ids": sorted(kept_ids),
+            "candidates": [{
+                "id": it["memory"].memory_id, "text": it["memory"].text,
+                "scores": {d: round(it["score"][d], 3)
+                           for d in ("time", "semantic", "frequency", "task", "final")},
+                "kept": it["memory"].memory_id in kept_ids,
+            } for it in res.scored[:20]],
+        }
+        detail["candidates"].sort(key=lambda x: -x["scores"]["final"])
+        demo_canvas.append_round("canvas_main", SHOWCASE_QUERY, answer, detail=detail)
+        mid.flush()
+        print(f"[展示预置] 已播种一轮：候选 {len(res.candidates)} → 共享 {len(kept)} 条")
+    except Exception as e:  # noqa: BLE001 - 播种失败只提示，不阻断
+        print(f"[展示预置] 跳过（{type(e).__name__}: {e}）")
+
+
 def _get_runtime() -> "SchedulingRuntime":
-    """懒初始化主副线运行时（与中间件共用单例）。"""
+    """懒初始化节点运行时（与中间件共用单例）。"""
     global _RT
     if _RT is None:
         _RT = SchedulingRuntime(_get_mid(), SchedulingConfig.load(ROOT / "config" / "srtp.yaml"))
@@ -209,8 +280,8 @@ def _pool_layout(mid: MemorySchedulingMiddleware, extra_ids: list[str] | None = 
     """双池 2D 语义布局（PCA 投影，坐标归一化到 [0,1]）。
 
     常驻池：对其全部 embedding 做 SVD 取 top-2 主成分；共享池条目复用同一变换投影。
-    extra_ids：额外投影指定记忆（用于副线"继承记忆"在共享池侧的虚位，
-    连线体现常驻池 → 共享池的继承关系，随所选副线刷新）。
+    extra_ids：额外投影指定记忆（用于"共享自上游"的记忆在共享侧虚位，
+    连线体现 节点私有记忆 → 共享记忆 的来源关系，随所选节点刷新）。
     缺 embedding / 样本不足时退回网格布局，保证页面永远有图。
     返回 {resident:[...], shared:[...], extra:[{id,text,x,y}]}。
     """
@@ -228,7 +299,7 @@ def _pool_layout(mid: MemorySchedulingMiddleware, extra_ids: list[str] | None = 
             shared_emb[it.get("memory_id")] = np.asarray(rec.embedding, dtype=np.float32).ravel()
 
     now = time.time()
-    extra: list[dict] = []  # 副线继承记忆的共享池侧虚位（仅 PCA 分支填充）
+    extra: list[dict] = []  # 共享记忆在共享侧的虚位（仅 PCA 分��填充）
     resident = []
     if len(mats) >= 2:
         X = np.stack(mats)
@@ -243,7 +314,12 @@ def _pool_layout(mid: MemorySchedulingMiddleware, extra_ids: list[str] | None = 
         coords = (P - lo) / rng
         for m, (cx, cy) in zip(meta, coords):
             resident.append({
-                "id": m.memory_id, "text": m.text, "tag": m.task_tag or "",
+                "id": m.memory_id, "text": m.text,
+                # D-057：标签（daily/profile/...）不再是组织维度，改为携带
+                # **所属 topic 节点** —— 一条记忆归属一个节点，但可被多个节点共享，
+                # 记忆池按所属节点着色才与图结构一致。
+                "owner": getattr(m, "owner_node", "") or "",
+                "tag": m.task_tag or "",
                 "age_h": round((now - m.timestamp) / 3600.0, 1),
                 "access": getattr(m, "access_count", 0),
                 "x": round(float(cx), 4), "y": round(float(cy), 4),
@@ -258,13 +334,15 @@ def _pool_layout(mid: MemorySchedulingMiddleware, extra_ids: list[str] | None = 
                 sy = (pc[1] - lo[1]) / rng[1]
             else:
                 sx = sy = 0.5
+            rec = mid.resident_pool.get(it.get("memory_id"))
             shared.append({
                 "id": it.get("memory_id"), "text": it.get("text", ""),
+                "owner": (getattr(rec, "owner_node", "") if rec is not None else "") or "",
                 "score": round(float(it.get("score", 0.0)), 4),
                 "x": round(float(min(1.0, max(0.0, sx))), 4),
                 "y": round(float(min(1.0, max(0.0, sy))), 4),
             })
-        # 额外投影（副线继承记忆虚位）：同一 PCA 变换，保证与常驻池同一定标
+        # 额外投影（共享记忆虚位）：同一 PCA 变换，保证与私有记忆同一定标
         extra = []
         for eid in (extra_ids or []):
             rec = mid.resident_pool.get(eid)
@@ -365,7 +443,7 @@ def _run_smoke() -> dict:
             step["compression_ratio"] = round(res.compression_ratio, 3)
             step["latency_ms"] = {k: round(v, 2) for k, v in res.latency_ms.items()}
 
-            # 回答生成（REQ-502：副线吃调度精选记忆生成回答）——直接展示防"胡言乱语"
+            # 回答生成（REQ-502：节点吃调度精选记忆生成回答）——直接展示防"胡言乱语"
             kept_texts = [m.text for m in res.kept]
             step["kept_memories"] = kept_texts
             llm_client = _get_llm_client(mid)
@@ -668,10 +746,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def _handle_canvas_create_sub(self):
-        """创建副线：POST {from_round, title, query}。
+        """创建下游节点：POST {from_round, title, query}。
 
-        记忆调度根据副线的第一个 query 进行：schedule_once(query) 从常驻池精选记忆 →
-        作为该副线从主线继承的记忆注入第一轮 → 副线成为独立可问答线路。
+        按第一问 schedule_once(query) 选源并精选记忆 → 注入新节点第一轮 →
+        它成为可独立问答、且可再向下游共享记忆的节点。
         """
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length > 0 else b"{}"
@@ -687,40 +765,79 @@ class Handler(BaseHTTPRequestHandler):
                                        ensure_ascii=False).encode("utf-8"),
                        "application/json; charset=utf-8")
             return
+        # SSE 响应头（与 _handle_canvas_ask 同一套；HTTP/1.0 下必须 close_connection）
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        self.close_connection = True
+
+        def stage(name: str) -> None:
+            self._send_sse(json.dumps({"type": "stage", "stage": name}, ensure_ascii=False))
+
         try:
             mid = _get_mid()
             rt = _get_runtime()
             now = time.time()
-            # 记忆调度：以副线第一个 query 为准
+            # 选源：以第一问 query 为准
             res = mid.schedule_once(query, task_tag=None, now=now)
             kept_texts = [m.text for m in res.kept]
-            try:
-                answer = rt.main_answer(query, kept_texts)
-            except Exception as e:  # noqa: BLE001
+            stage("score")
+            # 调度结果先发：前端可立刻显示"继承了 N 条记忆"
+            self._send_sse(json.dumps({
+                "type": "round", "agent_mode": rt.mode,
+                "kept_count": len(res.kept),
+                "kept_memories": kept_texts,
+                "compression_ratio": round(res.compression_ratio, 3),
+            }, ensure_ascii=False))
+
+            stage("answer")
+            # 真流式（D-054）：第一问的回答同样逐字推送
+            parts = []
+            for chunk in rt.main_answer_stream(query, kept_texts):
+                parts.append(chunk)
+                self._send_sse(json.dumps({"type": "delta", "text": chunk},
+                                          ensure_ascii=False))
+            answer = "".join(parts).strip()
+            if not answer:
                 answer = f"基于继承记忆：{'；'.join(kept_texts[:3]) or '（本轮无保留记忆）'}"[:220]
+
+            stage("select")
             inherited_block = "\n".join(f"· {t}" for t in kept_texts[:6]) or "·（本轮无命中记忆）"
-            assistant = (f"副线已从主线 {from_round} 派生。根据第一问「{query}」完成记忆调度，"
+            assistant = (f"该下游节点从 {from_round} 派生。根据第一问「{query}」完成选源，"
                          f"继承 {len(kept_texts)} 条记忆：\n{inherited_block}\n\n{answer}")
             first_round = {"title": (query[:8] + "…") if len(query) > 8 else query,
                            "ts": now, "user": query, "assistant": assistant,
                            "inherited": kept_texts}
             sess, rnd = demo_canvas.create_sub(
-                title or f"副线 · {query[:10]}",
+                title or f"下游节点 · {query[:10]}",
                 derived_from=from_round, first_round=first_round)
             mid.flush()
-            self._send(200, json.dumps({
-                "ok": True, "session": sess, "round": rnd,
+            self._send_sse(json.dumps({
+                "type": "done", "session": sess, "round": rnd,
                 "agent_mode": rt.mode, "kept_count": len(res.kept),
                 "kept_memories": kept_texts,
                 "compression_ratio": round(res.compression_ratio, 3),
-            }, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            }, ensure_ascii=False))
         except Exception as e:  # noqa: BLE001
-            self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
-                                       ensure_ascii=False).encode("utf-8"),
-                       "application/json; charset=utf-8")
+            self._send_sse(json.dumps({"type": "error",
+                                       "message": f"{type(e).__name__}: {e}"},
+                                      ensure_ascii=False))
 
     def _handle_canvas_ask(self):
-        """画布追问：POST {session_id, query} → 调度 → 回答 → 追加为新回合并落盘。"""
+        """画布追问（**SSE 流式**，D-054）：POST {session_id, query} → 逐条 SSE event。
+
+        事件顺序：
+        1. {type:"stage",   stage}          — 调度阶段推进（前端实时点亮流水线）
+        2. {type:"round",   round, ...}     — 调度结果（明细/双池数据全在这里）
+        3. {type:"delta",   text}           — **真流式**回答片段（LLM 逐 chunk）
+        4. {type:"done"} / {type:"error"}
+
+        为什么不用一次性 JSON：LLM 生成 + 调度要几秒，一次性返回会让界面
+        「按了发送 → 干等 → 整段蹦出」。真流式才有对话感。
+        """
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length > 0 else b"{}"
         try:
@@ -734,11 +851,30 @@ class Handler(BaseHTTPRequestHandler):
                                        ensure_ascii=False).encode("utf-8"),
                        "application/json; charset=utf-8")
             return
+
+        # SSE 响应头（必须在任何产出之前发出，否则前端拿不到流）
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")   # 反向代理下别缓冲，否则流式失效
+        self.end_headers()
+        # ⚠️ 本 Handler 是 BaseHTTPRequestHandler，默认 protocol_version=HTTP/1.0。
+        # 既然这里声明了 keep-alive，服务端就不会主动关闭 socket，
+        # 而它实际也只处理这一个请求 → 浏览器 reader.read() 永远等不到流结束，
+        # 界面会一直卡在"调度中"。SSE 是一次性响应，直接标记关闭。
+        self.close_connection = True
+
+        def stage(name: str) -> None:
+            self._send_sse(json.dumps({"type": "stage", "stage": name}, ensure_ascii=False))
+
         try:
+            stage("recall")
             mid = _get_mid()
             rt = _get_runtime()
             now = time.time()
             res = mid.schedule_once(query, task_tag=None, now=now)
+            stage("score")
             kept_texts = [m.text for m in res.kept]
             kept_ids = {m.memory_id for m in res.kept}
             prior = getattr(mid.weights, "_cached_prior", None) or dict(DEFAULT_WEIGHTS)
@@ -751,16 +887,12 @@ class Handler(BaseHTTPRequestHandler):
                     "kept": m.memory_id in kept_ids,
                 })
             candidates.sort(key=lambda c: -c["scores"]["final"])
-            try:
-                answer = rt.main_answer(query, kept_texts)
-            except Exception as e:  # noqa: BLE001 - 回答失败时给基于记忆的兜底文案
-                ctx = "；".join(kept_texts[:3]) or "（本轮无保留记忆）"
-                answer = f"基于共享池记忆：{ctx[:180]}"
-            rnd = demo_canvas.append_round(session_id, query, answer)
-            mid.flush()
+            stage("rank")
+
+            # 调度结果先发：前端拿到就能渲染四维打分表与双池，不必等回答结束
             layout = _pool_layout(mid)
-            self._send(200, json.dumps({
-                "ok": True, "round": rnd, "agent_mode": rt.mode,
+            self._send_sse(json.dumps({
+                "type": "round", "agent_mode": rt.mode,
                 "kept_count": len(res.kept),
                 "kept_memories": kept_texts,
                 "kept_ids": sorted(kept_ids),
@@ -770,14 +902,43 @@ class Handler(BaseHTTPRequestHandler):
                 "candidates": candidates[:20],
                 "shared": layout["shared"],
                 "max_shared": mid.config.max_shared,
-            }, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            }, ensure_ascii=False))
+
+            stage("answer")
+            # 真流式：模型吐一段推一段（此前是"算完整段再切片"，界面整段蹦出）
+            parts = []
+            for chunk in rt.main_answer_stream(query, kept_texts):
+                parts.append(chunk)
+                self._send_sse(json.dumps({"type": "delta", "text": chunk},
+                                          ensure_ascii=False))
+            answer = "".join(parts).strip()
+
+            # 落盘成新回合（控制台左栏历史靠它）
+            try:
+                rnd = demo_canvas.append_round(session_id, query, answer)
+            except Exception as e:  # noqa: BLE001 - 回答已流完，落盘失败不该让界面报错
+                rnd = {"round_id": f"r_{int(now)}", "user": query, "assistant": answer,
+                       "ts": now, "title": query[:24]}
+                self._send_sse(json.dumps({"type": "warn",
+                                           "message": f"回合落盘失败：{type(e).__name__}"},
+                                          ensure_ascii=False))
+            mid.flush()
+            self._send_sse(json.dumps({
+                "type": "done", "round": rnd, "agent_mode": rt.mode,
+                "kept_count": len(res.kept),
+                "compression_ratio": round(res.compression_ratio, 3),
+            }, ensure_ascii=False))
         except Exception as e:  # noqa: BLE001
-            self._send(500, json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"},
-                                       ensure_ascii=False).encode("utf-8"),
-                       "application/json; charset=utf-8")
+            self._send_sse(json.dumps({"type": "error",
+                                       "message": f"{type(e).__name__}: {e}"},
+                                      ensure_ascii=False))
 
     def _handle_canvas_layout(self):
-        """节点拖拽布局落盘：POST {positions: {"session|round": {dx,dy}}}。"""
+        """节点拖拽布局落盘：POST {positions: {"session|round": {dx,dy}}}。
+
+        D-063：新增 `reset:true` —— 清空全部已保存偏移，恢复默认排布
+        （没有这个入口时，节点被拖乱/拖出可视区就再也回不去）。
+        """
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length > 0 else b"{}"
         try:
@@ -785,7 +946,8 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             payload = {}
         try:
-            lay = demo_canvas.save_layout(payload.get("positions") or {})
+            lay = demo_canvas.save_layout(payload.get("positions") or {},
+                                          reset=bool(payload.get("reset")))
             self._send(200, json.dumps({"ok": True, "layout": lay},
                                        ensure_ascii=False).encode("utf-8"),
                        "application/json; charset=utf-8")
@@ -795,12 +957,12 @@ class Handler(BaseHTTPRequestHandler):
                        "application/json; charset=utf-8")
 
     def _handle_chat_sse(self):
-        """SSE 流式聊天（主副线架构）：POST body={query, task_tag?, run_sub?} → 逐条 SSE event。
+        """SSE 流式聊天（节点/共享架构）：POST body={query, task_tag?, run_sub?} → 逐条 SSE event。
 
         事件顺序：
-        1. {type:"schedule", agent_mode, ...}  — 主线调度过程（召回/四维打分/权重/选择）
+        1. {type:"schedule", agent_mode, ...}  — 调度过程（召回/四维打分/权重/选源）
         2. {type:"pools", resident, shared, recalled_ids, kept_ids} — 双池向量库布局
-        3. {type:"answer_delta", text}         — 主线 Agent 流式回答（逐字/逐段）
+        3. {type:"answer_delta", text}         — 节点 Agent 流式回答（逐字/逐段）
         4. {type:"done", ...}                  — 结束信号
         """
         length = int(self.headers.get("Content-Length", 0))
@@ -818,6 +980,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
+        # 同 _handle_canvas_ask：HTTP/1.0 下声明 keep-alive 会让 socket 永不关闭
+        self.close_connection = True
 
         if not query:
             self._send_sse(json.dumps({"type": "error", "message": "查询不能为空"},
@@ -830,7 +994,7 @@ class Handler(BaseHTTPRequestHandler):
             now = time.time()
             agent_mode = rt.mode
 
-            # ① 主线调度
+            # ① 选源与调度
             res = mid.schedule_once(query, task_tag=task_tag or None, now=now)
             kept_texts = [m.text for m in res.kept]
             kept_ids = {m.memory_id for m in res.kept}
@@ -847,8 +1011,7 @@ class Handler(BaseHTTPRequestHandler):
             cands.sort(key=lambda c: -c["scores"]["final"])
             prior = getattr(mid.weights, "_cached_prior", None) or dict(DEFAULT_WEIGHTS)
 
-            # 主线回答（真实 LLM / AgentScope Agent；先算出完整文本，再切片流式推送）
-            main_answer = rt.main_answer(query, kept_texts)
+            main_answer = None
 
             schedule_event = {
                 "type": "schedule",
@@ -878,10 +1041,14 @@ class Handler(BaseHTTPRequestHandler):
                 "max_shared": mid.config.max_shared,
             }, ensure_ascii=False))
 
-            # ③ 主线回答流式推送（预计算文本切片）
-            for chunk in _slice_text(main_answer):
+            # ③ 节点回答：**真**流式（D-054）。此前是 `main_answer()` 先算完整文本
+            #    再 `_slice_text()` 切片 —— 界面会在等待后整段蹦出，不是真流式。
+            parts = []
+            for chunk in rt.main_answer_stream(query, kept_texts):
+                parts.append(chunk)
                 self._send_sse(json.dumps({"type": "answer_delta", "text": chunk},
                                           ensure_ascii=False))
+            main_answer = "".join(parts).strip()
 
             # ⑤ 收尾
             mid.flush()

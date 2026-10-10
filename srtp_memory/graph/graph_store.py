@@ -55,7 +55,7 @@ class GraphStore:
     def _ensure_main(self) -> TopicNode:
         if MAIN_NODE not in self._nodes:
             self._nodes[MAIN_NODE] = TopicNode(
-                node_id=MAIN_NODE, topic="主线", created_at=time.time(), summary_at=time.time()
+                node_id=MAIN_NODE, topic="主节点", created_at=time.time(), summary_at=time.time()
             )
         return self._nodes[MAIN_NODE]
 

@@ -1,0 +1,37 @@
+# graph_g4_adt.yaml —— G4 + 自适应时间尺度（唯一差异：attention_impl）
+#
+# 背景（LoCoMo 真实数据集诊断，D-050）：
+#   固定 LAMBDA_TIME = 0.01/小时 → 半衰期 ≈ 69 小时（≈2.9 天），
+#   而 LoCoMo conv0 语料跨度 **432 小时（18 天）**。于是候选的 time 分被压进极窄区间：
+#       实测 time ∈ [0.0215, 0.0561]，std = 0.0168，只有 3 个取值
+#   这造成两个方向相反但同源的失败：
+#     ① 不归一化 → time 几乎常数，白占 0.25 权重（禁用 time 后结果逐位相同）；
+#     ② 批内 min-max 归一化 → 噪声被拉伸到 [0,1]，放大约 28 倍，反客为主
+#        （G4_norm MRR 0.1303 < G4 0.2028；长期会话里答案常在早期 session）。
+#
+# 修复：λ_eff = TIME_DECAY_K / span_hours（span_hours = 候选集时间戳跨度），
+#       使 time 分在任何语料跨度下都跨越 exp(-K) → 1.0 的完整动态范围。
+# 本组与 graph_g4 只差 attention_impl 一项，用于单变量验证该修复。
+retriever_impl: retriever.vector
+attention_impl: attention.adaptive_time   # ★ 与 graph_g4 的唯一差异
+weight_impl:    weight.full
+selector_impl:  selector.topk
+embedding_impl: embed.dashscope
+reward_impl:    reward.explicit
+model_impl:     model.dashscope   # LLM 先验后端（无 DEEPSEEK_API_KEY，改用 qwen-plus）
+conditioning_dims: [semantic, task]
+top_k: 8                              # 归因修正：五组统一固定 K
+threshold: 0.0
+graph:
+  enabled: true
+  source_mode: auto
+  depth: 1
+  source_topk: 3
+  quota_mode: strength                # 边强度决定带宽
+  quota_lambda: 0.7
+  quota_tau: 0.5
+  min_quota: 1
+budget:
+  default_tier: full
+  adaptive: false
+graph_provenance: "由 analysis/run_graph_ablation.py 从 data/graph_dataset.jsonl 固定图结构注入"

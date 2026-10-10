@@ -54,11 +54,11 @@ class MemorySchedulingMiddleware:
         if llm_prior_fn is None and self.config.weight_impl == "weight.full":
             llm_prior_fn = _make_real_llm_prior(self.config.model_impl)
 
-        # 常驻完整池（per-user 真池）
+        # 节点私有记忆（per-user 真池）
         pool_path = resident_pool_path or f"data/reme/{user_id}/main/resident_pool.jsonl"
         self.resident_pool = ResidentMemoryPool(user_id, session_id, pool_path)
 
-        # 共享池（副线 workspace）
+        # 共享池（下游节点 workspace）
         sp_path = shared_pool_path or f"data/reme/{user_id}/sub1/shared_pool.json"
         self.shared_pool = SharedMemoryPool(max_size=self.config.max_shared, persist_path=sp_path)
 
@@ -321,7 +321,7 @@ class MemorySchedulingMiddleware:
                    timestamp: float | None = None,
                    node_id: str | None = None,
                    persist: bool = True) -> "MemoryCandidate":
-        """写入一条记忆（真实场景由 ReMe auto_memory / 副线回写触发）。
+        """写入一条记忆（真实场景由 ReMe auto_memory / 下游节点回写触发）。
 
         关键：入库即算 embedding 并 upsert 进常驻池向量索引 —— 否则 retriever.vector
         无语料可检（空结果）。embedding 走装配后端（真实 API + 落盘缓存 / 无 key 降级占位）。

@@ -1,0 +1,39 @@
+# graph_g4_semonly.yaml —— 诊断组：G4 只保留 semantic 维（D-050 语义上界）
+#
+# 动机：LoCoMo 诊断发现四维里有三维是"死的" ——
+#   · task      ≡ 1.0（语料没有"口径"概念，所有候选与 query 同标签）
+#   · frequency ≡ 0  （首轮 access_count=0，1-exp(0)=0）
+#   · time      自适应 λ 后虽有动态范围，但 recall 逐位不变（净贡献≈0）
+# 于是问题变成：**四维融合在真实语料上到底是帮忙还是拖后腿？**
+# 本组把 time/frequency/task 全关掉，只留 semantic，即"语义上界"。
+#
+# 判读：
+#   · 若 semonly >> G4  → 四维融合在 LoCoMo 上是**净负面**，必须靠门控/反馈自动关维；
+#   · 若 semonly ≈ G4   → 四维确实无效（不帮忙也不害人），论文应写成"适用边界"；
+#   · 若 semonly <  G4  → 四维里仍有维在提供真实增益（需回头定位是哪一维）。
+#
+# 与 graph_g4 的唯一差异：attention_disabled_dims
+retriever_impl: retriever.vector
+attention_impl: attention.full
+weight_impl:    weight.full
+selector_impl:  selector.topk
+embedding_impl: embed.dashscope
+reward_impl:    reward.explicit
+model_impl:     model.dashscope
+conditioning_dims: [semantic, task]
+top_k: 8
+threshold: 0.0
+attention_disabled_dims: [time, frequency, task]   # ★ 与 graph_g4 的唯一差异
+graph:
+  enabled: true
+  source_mode: auto
+  depth: 1
+  source_topk: 3
+  quota_mode: strength
+  quota_lambda: 0.7
+  quota_tau: 0.5
+  min_quota: 1
+budget:
+  default_tier: fast
+  adaptive: false
+graph_provenance: "LoCoMo 真实数据集诊断组（analysis/locomo_adapter.py 产出）"

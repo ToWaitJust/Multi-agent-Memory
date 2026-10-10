@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SRTP · 图拓扑视图</title>
+<script>
+  /* 首屏同步主题，避免刷新时闪一下白底（必须在样式表之前） */
+  (function(){try{var t=localStorage.getItem('srtp.theme');
+    if(t!=='dark'&&t!=='light'){t='dark';}   /* D-057 默认暗色 */
+    
+    /* D-061：高对比首屏同步，否则刷新会闪一下低对比 */
+    var c=localStorage.getItem('srtp.contrast');
+    if(c==='high'){document.documentElement.setAttribute('data-contrast','high');}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+</script>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -12,7 +21,7 @@
   <a class="navlink" href="/">控制台</a>
   <a class="navlink" href="/canvas">会话画布</a>
   <a class="navlink on" href="/graph">图拓扑</a>
-  <h1>图拓扑视图</h1>
+  <h1>图拓扑 · 节点与共享关系</h1>
   <span class="spacer"></span>
   <div class="toolbar">
     <div class="field">
@@ -20,11 +29,20 @@
     </div>
     <button class="btn btn-primary" id="saBtn">计算选源</button>
     <div class="seg" role="group" aria-label="布局">
-      <button data-layout="breadthfirst" class="on">分层</button>
+      <button data-layout="cose" class="on">力导向</button>
+      <button data-layout="breadthfirst">分层</button>
       <button data-layout="circle">环形</button>
       <button data-layout="grid">网格</button>
     </div>
     <button class="btn btn-ghost" id="fitBtn">适应窗口</button>
+    <button class="theme-btn" id="contrastBtn" title="高对比模式（强光/投影下更清晰）" aria-label="切换高对比模式">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z" fill="currentColor" stroke="none"/></svg>
+    </button>
+    <button class="theme-btn" id="themeBtn" title="切换暗色/亮色" aria-label="切换暗色或亮色">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
   </div>
 </header>
 
@@ -32,13 +50,7 @@
   <div class="canvas-wrap">
     <div id="cy"></div>
 
-    <div class="map-legend">
-      <div><i class="sw" style="background:#3b82f6"></i>depends_on 依赖</div>
-      <div><i class="sw" style="background:#0f9d76"></i>derives_from 派生</div>
-      <div><i class="sw" style="background:#e08a3c"></i>references 引用</div>
-      <div><i class="sw" style="background:#9aa9a3"></i>similar_to 相近</div>
-      <div style="margin-top:4px;color:#93a69d">边宽 = 强度 · 虚线 = 成环被降级</div>
-    </div>
+    <div class="map-legend" id="legendBox"></div>
 
     <div class="float-tip" id="ftip">载入中…</div>
   </div>
@@ -48,10 +60,11 @@
 
 <div id="tip"></div>
 <div id="flash" style="position:fixed;left:50%;top:70px;transform:translateX(-50%);z-index:99;
-  background:#152b23;color:#fff;font-size:12.5px;padding:9px 16px;border-radius:10px;
-  box-shadow:0 10px 28px rgba(16,42,33,.25);opacity:0;transition:opacity .25s;pointer-events:none"></div>
+  background:var(--ink);color:var(--bg);font-size:12.5px;padding:9px 16px;border-radius:10px;
+  box-shadow:var(--shadow-2);opacity:0;transition:opacity .25s;pointer-events:none"></div>
 
 <script src="/static/vendor/cytoscape.min.js"></script>
+<script src="/static/theme.js"></script>
 <script src="/static/graph.js"></script>
 </body>
 </html>

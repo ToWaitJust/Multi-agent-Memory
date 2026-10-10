@@ -143,6 +143,9 @@ class SourceSelection:
     degraded_static: bool = False     # 是否因 rel 方差过低退化为纯静态
     rejected_edges: list[str] = field(default_factory=list)   # 环检测拒绝的 edge_id
     folded: dict[str, str] = field(default_factory=dict)      # 版本折叠映射
+    semantic_expanded: list[str] = field(default_factory=list)
+    # D-051：由「语义源扩展」补进候选池的节点（不在图邻域内，strength=0）。
+    # 埋点用：可据此统计"语义扩展救回了多少原本不可达的源"。
     reason: str = ""
 
     @property
@@ -166,6 +169,7 @@ class SourceSelection:
             "sources": [s.to_dict() for s in self.sources],
             "rejected_edges": list(self.rejected_edges),
             "folded": dict(self.folded),
+            "semantic_expanded": list(self.semantic_expanded),
             "reason": self.reason,
         }
 

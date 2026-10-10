@@ -1,4 +1,4 @@
-"""装配入口（§4.10）：加载 srtp.yaml → 构建主副线 → 跑端到端演示 → 登记 run_manifest。
+"""装配入口（§4.10）：加载 srtp.yaml → 构建主下游节点 → 跑端到端演示 → 登记 run_manifest。
 
 用法: python main.py [--demo] [--ablation]
 V2.1：真实 AgentScope 装配在接环境时完成；本入口先跑 headless 调度演示 + 消融批量。
